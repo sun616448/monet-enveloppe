@@ -24,7 +24,7 @@ try {
   const bnB = style.predict(styleB);
   console.log('\nbottleneck shape:', bnA.shape); // expect [1,1,1,100]
 
-  // Interpolate (the heart of the envelope concept).
+  // Interpolate (the heart of the enveloppe concept).
   const t = 0.35;
   const lerp = bnA.mul(tf.scalar(1 - t)).add(bnB.mul(tf.scalar(t)));
 

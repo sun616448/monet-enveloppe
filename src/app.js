@@ -20,7 +20,7 @@ import {
   matchPalette,
   stylize,
 } from './model.js';
-import { sortAnchors, locate, formatClock } from './envelope.js';
+import { sortAnchors, locate, formatClock } from './enveloppe.js';
 
 const els = {
   stage: document.getElementById('stage'),
