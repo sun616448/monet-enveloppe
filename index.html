@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Monet Envelope — style transfer through the hours</title>
+    <meta
+      name="description"
+      content="Recreate Monet's série/enveloppe: watch a photo drift through the shifting light of a Monet series using real-time neural style transfer in your browser."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <div id="loader" class="loader">
+      <div class="loader-inner">
+        <div class="loader-title">Monet Envelope</div>
+        <div class="loader-bar-track"><div id="loaderBar" class="loader-bar"></div></div>
+        <div id="loaderText" class="loader-text">Preparing the studio…</div>
+      </div>
+    </div>
+
+    <header class="masthead">
+      <div class="masthead-line">
+        <span class="masthead-mark">l’enveloppe</span>
+        <span class="masthead-dot">·</span>
+        <span class="masthead-sub">real-time neural style transfer</span>
+      </div>
+      <h1>Monet Envelope</h1>
+      <p class="lede">
+        Monet painted the same motif again and again to capture
+        <em>l’enveloppe</em> — the changing veil of light across a day. Drag the
+        hour, or press play, and watch your photograph drift through a single
+        Monet palette, blended frame by frame.
+      </p>
+    </header>
+
+    <main class="layout">
+      <section class="viewer">
+        <div id="stage" class="stage">
+          <canvas id="canvas" class="stage-canvas"></canvas>
+        </div>
+
+        <div class="controls">
+          <button id="playBtn" class="play" aria-pressed="false">
+            <span class="play-icon" aria-hidden="true"></span>
+            <span class="label">Play day</span>
+          </button>
+
+          <div class="timeline">
+            <div class="time-readout">
+              <span id="clock" class="clock">12:00</span>
+              <span id="periodLabel" class="period">Midday</span>
+            </div>
+            <input
+              id="timeSlider"
+              class="slider"
+              type="range"
+              min="0"
+              max="24"
+              step="0.05"
+              value="12"
+              aria-label="Time of day"
+            />
+            <div class="ticks">
+              <span>00</span><span>06</span><span>12</span><span>18</span><span>24</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <aside class="sidebar">
+        <div class="panel">
+          <h2 class="panel-title">Your photograph</h2>
+          <label id="dropzone" class="dropzone" for="fileInput">
+            <span class="dropzone-icon" aria-hidden="true"></span>
+            <span class="dropzone-text">
+              <strong>Drop a photo</strong> here, click to browse, or paste from
+              the clipboard
+            </span>
+            <input id="fileInput" type="file" accept="image/*" hidden />
+          </label>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <h2 class="panel-title">Stylization strength</h2>
+            <span id="strengthVal" class="panel-val">100%</span>
+          </div>
+          <input
+            id="strengthSlider"
+            class="slider slider-plain"
+            type="range"
+            min="0"
+            max="1"
+            step="0.01"
+            value="1"
+            aria-label="Stylization strength"
+          />
+          <p class="panel-note">
+            How strongly the Monet style is applied. Lower values blend back in
+            your photo's own colours — useful when a between-hours mix looks muddy.
+          </p>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <h2 class="panel-title">Palette match</h2>
+            <span id="paletteVal" class="panel-val">60%</span>
+          </div>
+          <input
+            id="paletteSlider"
+            class="slider slider-plain"
+            type="range"
+            min="0"
+            max="1"
+            step="0.01"
+            value="0.6"
+            aria-label="Palette match"
+          />
+          <p class="panel-note">
+            Re-keys the output's colours to the real painting's palette
+            (interpolated between the two nearest hours). The model captures
+            Monet's brushwork well but its colours drift — this restores them.
+          </p>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <h2 class="panel-title">The palette</h2>
+          </div>
+          <div id="refStrip" class="ref-strip"></div>
+          <p class="panel-note">
+            A single palette of Monet's Venice lagoon, ordered from pale dawn
+            tones to saturated teal. The paintings are spaced across the day and
+            their colours interpolated, including across midnight, so the hue
+            drifts continuously. Click a painting to jump to its hour.
+          </p>
+        </div>
+
+        <div class="stats">
+          <span class="stat"><span id="backend" class="stat-val">—</span> backend</span>
+          <span class="stat"><span id="fps" class="stat-val">—</span></span>
+        </div>
+      </aside>
+    </main>
+
+    <footer class="colophon">
+      <span>Fully client-side · TensorFlow.js · arbitrary image stylization (Ghiasi et al.)</span>
+      <span>Paintings: Claude Monet, public domain via Wikimedia Commons</span>
+    </footer>
+
+    <script type="module" src="/src/app.js"></script>
+  </body>
+</html>
