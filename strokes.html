@@ -1,0 +1,538 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PROTO — stroke-based rendering (throwaway)</title>
+    <!--
+      THROWAWAY PROTOTYPE. Standalone, self-contained, no build deps, no TFJS.
+      Does NOT touch gatys.js / the production engine. Run under `npm run dev`
+      and open /strokes.html (needs the dev server so the canvas can read the
+      photo's pixels; a file:// load would taint the canvas).
+
+      Question under test: does painterly stroke-based rendering (Hertzmann '98
+      curved brush) give the "the painting is alive, morphing in your eyes"
+      feeling that perpetual live-Gatys couldn't — and do I like the look?
+
+      It does NOT wire color to the Haystack hour palettes. That is the next
+      step, only if this look is approved.
+    -->
+    <style>
+      :root { color-scheme: dark; }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+        background: #0d0f12;
+        color: #d7dde3;
+        display: flex;
+        min-height: 100vh;
+      }
+      .stagewrap {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+      }
+      #stage {
+        max-width: 100%;
+        max-height: 92vh;
+        border-radius: 8px;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+        background: #14110d;
+      }
+      aside {
+        width: 300px;
+        padding: 22px 18px;
+        background: #15191e;
+        border-left: 1px solid #232a31;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        overflow-y: auto;
+        max-height: 100vh;
+      }
+      h1 { font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: #8b97a3; margin: 0; }
+      .note { font-size: 11px; color: #768290; margin: 0; }
+      .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+      .big { font-size: 26px; font-weight: 600; color: #fff; font-variant-numeric: tabular-nums; }
+      label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: #9aa6b2; }
+      input[type='range'] { width: 100%; accent-color: #ffb066; }
+      button {
+        font: inherit;
+        padding: 8px 11px;
+        border-radius: 6px;
+        border: 1px solid #2c343d;
+        background: #1d242b;
+        color: #d7dde3;
+        cursor: pointer;
+      }
+      button:hover { background: #232b33; }
+      button.rec { border-color: #b8434a; color: #ff9aa0; }
+      .stat { display: flex; justify-content: space-between; font-variant-numeric: tabular-nums; }
+      .stat b { color: #fff; font-weight: 600; }
+      .bar { height: 4px; border-radius: 2px; background: #2a323b; overflow: hidden; }
+      .bar > i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #6db3ff, #ffb066); }
+      hr { border: none; border-top: 1px solid #232a31; margin: 2px 0; }
+    </style>
+  </head>
+  <body>
+    <div class="stagewrap">
+      <canvas id="stage"></canvas>
+    </div>
+    <aside>
+      <h1>Proto · stroke-based rendering</h1>
+      <p class="note">
+        Curved brush strokes, oriented along the photo's edges, colored from the
+        photo. Painted in layers — big strokes first, then finer detail — then
+        kept perpetually alive so it never fully settles.
+      </p>
+
+      <div class="row">
+        <span class="big" id="fps">—</span>
+        <span class="note">fps<br /><span id="phaseLbl">init…</span></span>
+      </div>
+
+      <div>
+        <div class="row"><span class="note">emergence</span><span id="emrgLbl" class="note">0%</span></div>
+        <div class="bar"><i id="emrgBar"></i></div>
+      </div>
+
+      <div class="stat"><span>strokes on canvas</span><b id="nstroke">0</b></div>
+      <div class="stat"><span>working res</span><b id="resLbl">—</b></div>
+
+      <hr />
+      <label>
+        emergence speed (strokes/frame) <span id="speLbl">90</span>
+        <input id="spe" type="range" min="10" max="400" step="10" value="90" />
+      </label>
+      <label>
+        keep-alive (strokes/sec) <span id="aliveLbl">120</span>
+        <input id="alive" type="range" min="0" max="600" step="10" value="120" />
+      </label>
+      <label>
+        stroke length <span id="lenLbl">1.0</span>
+        <input id="len" type="range" min="0.3" max="2.0" step="0.1" value="1.0" />
+      </label>
+      <label>
+        brush scale <span id="brushLbl">1.0</span>
+        <input id="brush" type="range" min="0.5" max="2.0" step="0.1" value="1.0" />
+      </label>
+      <label>
+        stroke opacity <span id="opaLbl">0.85</span>
+        <input id="opa" type="range" min="0.3" max="1.0" step="0.05" value="0.85" />
+      </label>
+      <label>
+        color jitter (life) <span id="jitLbl">8</span>
+        <input id="jit" type="range" min="0" max="30" step="1" value="8" />
+      </label>
+
+      <hr />
+      <div class="row">
+        <button id="pause">Pause</button>
+        <button id="restart">Restart paint</button>
+      </div>
+      <button id="rec" class="rec">● Record 15s → webm</button>
+      <p class="note" id="status">loading…</p>
+    </aside>
+
+    <script>
+      'use strict';
+      // ===================================================================
+      //  THROWAWAY stroke-based renderer. Pure canvas 2D, no dependencies.
+      // ===================================================================
+      const CONTENT_SRC = '/sample.jpg'; // Tübingen Neckarfront (served from public/)
+      const MAX_EDGE = 760;              // working longest edge
+
+      const $ = (id) => document.getElementById(id);
+      const setStatus = (s) => ($('status').textContent = s);
+
+      // live-tunable knobs (driven by the sidebar)
+      const knobs = {
+        spe: 90,      // strokes revealed per frame during emergence
+        alive: 120,   // perpetual strokes per second once emerged
+        len: 1.0,     // stroke length multiplier
+        brush: 1.0,   // brush width multiplier
+        opa: 0.85,    // stroke opacity
+        jit: 8,       // per-stroke color jitter (the "life" / morph)
+        running: true,
+      };
+
+      // Layer schedule: large coverage strokes -> progressively finer detail.
+      // blur = how soft the color the layer samples (coverage layers average,
+      // detail layers sample sharp). thresh = min edge strength for a fine
+      // stroke to be worth placing (so flat sky stays smooth; detail lands on
+      // buildings/trees/reflections). len = stroke length in brush-radius steps.
+      const LAYERS = [
+        { R: 15, blur: 9, full: true,  thresh: 0,  len: 5 },
+        { R: 8,  blur: 4, full: false, thresh: 14, len: 7 },
+        { R: 4,  blur: 2, full: false, thresh: 24, len: 9 },
+        { R: 2,  blur: 0, full: false, thresh: 38, len: 8 },
+      ];
+
+      // ---- image loading -------------------------------------------------
+      function loadImage(src) {
+        return new Promise((res, rej) => {
+          const img = new Image();
+          img.crossOrigin = 'anonymous';
+          img.onload = () => res(img);
+          img.onerror = () => rej(new Error('failed to load ' + src));
+          img.src = src;
+        });
+      }
+
+      function makeCanvas(w, h) {
+        const c = document.createElement('canvas');
+        c.width = w; c.height = h;
+        return c;
+      }
+
+      // ---- field precomputation -----------------------------------------
+      // Build, from the source pixels:
+      //   - mag[]      raw Sobel gradient magnitude (edge strength, for placement)
+      //   - dirX/dirY  a SMOOTHED orientation field (so flat areas inherit a
+      //                coherent direction instead of random noise)
+      // Strokes run PERPENDICULAR to the gradient — i.e. along edges/contours.
+      function buildFields(data, W, H) {
+        const lum = new Float32Array(W * H);
+        for (let i = 0; i < W * H; i++) {
+          lum[i] = 0.299 * data[i * 4] + 0.587 * data[i * 4 + 1] + 0.114 * data[i * 4 + 2];
+        }
+        const gx = new Float32Array(W * H);
+        const gy = new Float32Array(W * H);
+        const mag = new Float32Array(W * H);
+        const at = (x, y) => lum[Math.min(H - 1, Math.max(0, y)) * W + Math.min(W - 1, Math.max(0, x))];
+        for (let y = 0; y < H; y++) {
+          for (let x = 0; x < W; x++) {
+            const sx =
+              -at(x - 1, y - 1) - 2 * at(x - 1, y) - at(x - 1, y + 1) +
+               at(x + 1, y - 1) + 2 * at(x + 1, y) + at(x + 1, y + 1);
+            const sy =
+              -at(x - 1, y - 1) - 2 * at(x, y - 1) - at(x + 1, y - 1) +
+               at(x - 1, y + 1) + 2 * at(x, y + 1) + at(x + 1, y + 1);
+            const i = y * W + x;
+            gx[i] = sx; gy[i] = sy;
+            mag[i] = Math.hypot(sx, sy) / 4;
+          }
+        }
+        // smooth the gradient vectors (separable box blur, a few passes) so the
+        // orientation field is coherent and flat regions borrow neighbours' flow
+        boxBlur(gx, W, H, 3, 3);
+        boxBlur(gy, W, H, 3, 3);
+        const dirX = new Float32Array(W * H);
+        const dirY = new Float32Array(W * H);
+        for (let i = 0; i < W * H; i++) {
+          // perpendicular to (gx,gy) = (-gy, gx); normalize
+          let vx = -gy[i], vy = gx[i];
+          const m = Math.hypot(vx, vy);
+          if (m > 1e-4) { vx /= m; vy /= m; } else { vx = 1; vy = 0; }
+          dirX[i] = vx; dirY[i] = vy;
+        }
+        return { mag, dirX, dirY };
+      }
+
+      // simple separable box blur over a Float32 field, `passes` times
+      function boxBlur(buf, W, H, r, passes) {
+        const tmp = new Float32Array(buf.length);
+        const span = 2 * r + 1;
+        for (let p = 0; p < passes; p++) {
+          // horizontal
+          for (let y = 0; y < H; y++) {
+            let acc = 0;
+            for (let x = -r; x <= r; x++) acc += buf[y * W + Math.min(W - 1, Math.max(0, x))];
+            for (let x = 0; x < W; x++) {
+              tmp[y * W + x] = acc / span;
+              const xo = Math.max(0, x - r), xi = Math.min(W - 1, x + r + 1);
+              acc += buf[y * W + xi] - buf[y * W + xo];
+            }
+          }
+          // vertical
+          for (let x = 0; x < W; x++) {
+            let acc = 0;
+            for (let y = -r; y <= r; y++) acc += tmp[Math.min(H - 1, Math.max(0, y)) * W + x];
+            for (let y = 0; y < H; y++) {
+              buf[y * W + x] = acc / span;
+              const yo = Math.max(0, y - r), yi = Math.min(H - 1, y + r + 1);
+              acc += tmp[yi * W + x] - tmp[yo * W + x];
+            }
+          }
+        }
+      }
+
+      // bilinear color sample from a layer's (blurred) ImageData
+      function sampleColor(px, W, H, x, y) {
+        x = Math.min(W - 1.001, Math.max(0, x));
+        y = Math.min(H - 1.001, Math.max(0, y));
+        const x0 = x | 0, y0 = y | 0, fx = x - x0, fy = y - y0;
+        const idx = (xx, yy) => (yy * W + xx) * 4;
+        const out = [0, 0, 0];
+        for (let c = 0; c < 3; c++) {
+          const a = px[idx(x0, y0) + c],     b = px[idx(x0 + 1, y0) + c];
+          const d = px[idx(x0, y0 + 1) + c], e = px[idx(x0 + 1, y0 + 1) + c];
+          out[c] = (a * (1 - fx) + b * fx) * (1 - fy) + (d * (1 - fx) + e * fx) * fy;
+        }
+        return out;
+      }
+
+      // ---- the program ---------------------------------------------------
+      let W, H, ctx;
+      let field;                 // { mag, dirX, dirY }
+      let layerPixels = [];      // per-layer blurred ImageData.data
+      let plan = [];             // ordered emergence queue (built strokes)
+      let planCursor = 0;
+      let aliveSeeds = [];       // candidate seed points for keep-alive phase
+      let nDrawn = 0;
+      let groundData = null;     // dark underpainting
+
+      const sampleDir = (x, y) => {
+        const i = (Math.min(H - 1, Math.max(0, y | 0))) * W + Math.min(W - 1, Math.max(0, x | 0));
+        return [field.dirX[i], field.dirY[i]];
+      };
+      const sampleMag = (x, y) =>
+        field.mag[(Math.min(H - 1, Math.max(0, y | 0))) * W + Math.min(W - 1, Math.max(0, x | 0))];
+
+      // Grow a curved stroke from (x0,y0) in one direction. Hertzmann's curved
+      // brush: at each control point, step along the local edge direction, with
+      // a smoothing filter so the stroke curves gently instead of zig-zagging.
+      const FC = 0.5; // direction filter (0=rigid straight, 1=follow field exactly)
+      function growStroke(x0, y0, R, maxSteps, sign, dirSeed) {
+        const pts = [];
+        let x = x0, y = y0;
+        let [ldx, ldy] = dirSeed;
+        for (let i = 0; i < maxSteps; i++) {
+          let [dx, dy] = sampleDir(x, y);
+          // keep continuity — never flip ~180° between steps
+          if (dx * ldx + dy * ldy < 0) { dx = -dx; dy = -dy; }
+          // smoothing filter
+          dx = FC * dx + (1 - FC) * ldx;
+          dy = FC * dy + (1 - FC) * ldy;
+          const m = Math.hypot(dx, dy) || 1;
+          dx /= m; dy /= m;
+          x += sign * dx * R;
+          y += sign * dy * R;
+          if (x < -R || y < -R || x > W + R || y > H + R) break;
+          pts.push({ x, y });
+          ldx = dx; ldy = dy;
+        }
+        return pts;
+      }
+
+      // Build a full centered stroke (grows both ways from the seed).
+      function buildStroke(x, y, layerIdx) {
+        const L = LAYERS[layerIdx];
+        const R = L.R * knobs.brush;
+        const steps = Math.max(1, Math.round(L.len * knobs.len));
+        const dir0 = sampleDir(x, y);
+        const fwd = growStroke(x, y, R, steps, +1, dir0);
+        const bwd = growStroke(x, y, R, steps, -1, dir0);
+        const pts = bwd.reverse().concat([{ x, y }], fwd);
+        const col = sampleColor(layerPixels[layerIdx], W, H, x, y);
+        return { pts, width: R, col, layer: layerIdx };
+      }
+
+      function drawStroke(s) {
+        const j = knobs.jit;
+        // tiny per-stroke color jitter -> the painting keeps breathing/morphing
+        const r = clamp255(s.col[0] + (Math.random() - 0.5) * 2 * j);
+        const g = clamp255(s.col[1] + (Math.random() - 0.5) * 2 * j);
+        const b = clamp255(s.col[2] + (Math.random() - 0.5) * 2 * j);
+        ctx.strokeStyle = `rgb(${r | 0},${g | 0},${b | 0})`;
+        ctx.lineWidth = s.width * (0.85 + Math.random() * 0.3);
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.globalAlpha = knobs.opa;
+        ctx.beginPath();
+        const p = s.pts;
+        ctx.moveTo(p[0].x, p[0].y);
+        if (p.length === 1) ctx.lineTo(p[0].x + 0.1, p[0].y);
+        else for (let i = 1; i < p.length; i++) ctx.lineTo(p[i].x, p[i].y);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+        nDrawn++;
+      }
+      const clamp255 = (v) => (v < 0 ? 0 : v > 255 ? 255 : v);
+
+      // Build the ordered emergence plan: for each layer (large -> small) place
+      // strokes on a jittered grid. Coverage layer fills everything; detail
+      // layers only place where the edge is strong enough.
+      function buildPlan() {
+        plan = [];
+        aliveSeeds = [];
+        for (let li = 0; li < LAYERS.length; li++) {
+          const L = LAYERS[li];
+          const R = L.R * knobs.brush;
+          const step = Math.max(2, R);
+          const layerStrokes = [];
+          for (let y = step * 0.5; y < H; y += step) {
+            for (let x = step * 0.5; x < W; x += step) {
+              const jx = x + (Math.random() - 0.5) * step;
+              const jy = y + (Math.random() - 0.5) * step;
+              if (!L.full && sampleMag(jx, jy) < L.thresh) continue;
+              layerStrokes.push(buildStroke(jx, jy, li));
+              if (li >= 1) aliveSeeds.push({ x: jx, y: jy, layer: li });
+            }
+          }
+          shuffle(layerStrokes); // emerge organically within a layer
+          plan.push(...layerStrokes);
+        }
+        planCursor = 0;
+      }
+
+      function shuffle(a) {
+        for (let i = a.length - 1; i > 0; i--) {
+          const j = (Math.random() * (i + 1)) | 0;
+          [a[i], a[j]] = [a[j], a[i]];
+        }
+      }
+
+      // dark underpainting so the first strokes read as emerging out of dusk
+      function layGround() {
+        ctx.globalAlpha = 1;
+        ctx.putImageData(groundData, 0, 0);
+      }
+
+      function restart() {
+        layGround();
+        nDrawn = 0;
+        buildPlan();
+      }
+
+      // ---- main loop -----------------------------------------------------
+      let last = performance.now();
+      let fpsT = last, fpsN = 0;
+      let aliveAcc = 0;
+
+      function frame(now) {
+        const dt = (now - last) / 1000;
+        last = now;
+        if (knobs.running) {
+          // emergence: dispense a chunk of the plan per frame
+          if (planCursor < plan.length) {
+            const end = Math.min(plan.length, planCursor + knobs.spe);
+            for (; planCursor < end; planCursor++) drawStroke(plan[planCursor]);
+          } else if (knobs.alive > 0 && aliveSeeds.length) {
+            // keep-alive: perpetually refresh small/medium strokes so the
+            // surface never settles — the "morphing in your eyes" test.
+            aliveAcc += knobs.alive * dt;
+            const n = aliveAcc | 0;
+            aliveAcc -= n;
+            for (let k = 0; k < n; k++) {
+              const seed = aliveSeeds[(Math.random() * aliveSeeds.length) | 0];
+              // jitter the seed a touch so strokes reorganize, not just redraw
+              const jx = seed.x + (Math.random() - 0.5) * LAYERS[seed.layer].R;
+              const jy = seed.y + (Math.random() - 0.5) * LAYERS[seed.layer].R;
+              drawStroke(buildStroke(jx, jy, seed.layer));
+            }
+          }
+        }
+
+        // HUD
+        fpsN++;
+        if (now - fpsT > 400) {
+          $('fps').textContent = (fpsN / ((now - fpsT) / 1000)).toFixed(0);
+          fpsT = now; fpsN = 0;
+          $('nstroke').textContent = nDrawn.toLocaleString();
+          const emerging = planCursor < plan.length;
+          const pct = plan.length ? Math.min(100, (planCursor / plan.length) * 100) : 0;
+          $('emrgBar').style.width = pct + '%';
+          $('emrgLbl').textContent = (pct | 0) + '%';
+          $('phaseLbl').textContent = emerging ? 'emerging' : (knobs.alive > 0 ? 'alive' : 'settled');
+        }
+        requestAnimationFrame(frame);
+      }
+
+      // ---- boot ----------------------------------------------------------
+      async function main() {
+        setStatus('loading photo…');
+        const img = await loadImage(CONTENT_SRC);
+        const scale = MAX_EDGE / Math.max(img.width, img.height);
+        W = Math.round(img.width * Math.min(1, scale));
+        H = Math.round(img.height * Math.min(1, scale));
+
+        const stage = $('stage');
+        stage.width = W; stage.height = H;
+        ctx = stage.getContext('2d');
+        $('resLbl').textContent = `${W}×${H}`;
+
+        // source pixels at working res
+        setStatus('analyzing edges…');
+        const srcCanvas = makeCanvas(W, H);
+        const sctx = srcCanvas.getContext('2d');
+        sctx.drawImage(img, 0, 0, W, H);
+        const srcData = sctx.getImageData(0, 0, W, H).data;
+
+        field = buildFields(srcData, W, H);
+
+        // per-layer blurred color sources
+        for (const L of LAYERS) {
+          const c = makeCanvas(W, H);
+          const cc = c.getContext('2d');
+          cc.filter = L.blur > 0 ? `blur(${L.blur}px)` : 'none';
+          cc.drawImage(img, 0, 0, W, H);
+          cc.filter = 'none';
+          layerPixels.push(cc.getImageData(0, 0, W, H).data);
+        }
+
+        // dark underpainting from the most-blurred layer, dimmed
+        const gctx = makeCanvas(W, H).getContext('2d');
+        gctx.filter = 'blur(14px)';
+        gctx.drawImage(img, 0, 0, W, H);
+        gctx.filter = 'none';
+        const gd = gctx.getImageData(0, 0, W, H);
+        for (let i = 0; i < gd.data.length; i += 4) {
+          gd.data[i] *= 0.35; gd.data[i + 1] *= 0.35; gd.data[i + 2] *= 0.35;
+        }
+        groundData = gd;
+
+        setStatus('building strokes…');
+        restart();
+
+        // controls
+        const bind = (id, key, fmt) => {
+          const el = $(id), lbl = $(id + 'Lbl');
+          el.addEventListener('input', () => {
+            knobs[key] = parseFloat(el.value);
+            if (lbl) lbl.textContent = fmt ? fmt(knobs[key]) : el.value;
+          });
+        };
+        bind('spe', 'spe');
+        bind('alive', 'alive');
+        bind('len', 'len', (v) => v.toFixed(1));
+        bind('brush', 'brush', (v) => v.toFixed(1));
+        bind('opa', 'opa', (v) => v.toFixed(2));
+        bind('jit', 'jit');
+
+        $('pause').addEventListener('click', () => {
+          knobs.running = !knobs.running;
+          $('pause').textContent = knobs.running ? 'Pause' : 'Resume';
+        });
+        $('restart').addEventListener('click', restart);
+
+        $('rec').addEventListener('click', () => {
+          const stream = stage.captureStream(30);
+          const rec = new MediaRecorder(stream, { mimeType: 'video/webm' });
+          const chunks = [];
+          rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+          rec.onstop = () => {
+            const url = URL.createObjectURL(new Blob(chunks, { type: 'video/webm' }));
+            const a = document.createElement('a');
+            a.href = url; a.download = 'proto-strokes.webm'; a.click();
+            $('rec').textContent = '● Record 15s → webm';
+          };
+          rec.start();
+          $('rec').textContent = '◉ recording…';
+          setTimeout(() => rec.stop(), 15000);
+        });
+
+        setStatus('running — watch it emerge, then keep alive.');
+        requestAnimationFrame(frame);
+      }
+
+      main().catch((e) => {
+        console.error(e);
+        setStatus('error: ' + e.message);
+      });
+    </script>
+  </body>
+</html>

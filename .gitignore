@@ -1,6 +1,10 @@
 # Dependencies
 node_modules/
 
+# Model conversion scratch (one-time; output committed under public/)
+.convert-venv/
+convert/
+
 # Build output
 dist/
 
@@ -18,3 +22,6 @@ npm-debug.log*
 .env
 .env.*
 !.env.example
+
+# Validation probe output (generated, not source)
+validate/out/

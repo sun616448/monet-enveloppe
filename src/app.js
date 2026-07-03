@@ -1,63 +1,73 @@
 import './style.css';
-import * as tf from '@tensorflow/tfjs';
-import {
-  REFERENCES,
-  DEFAULT_CONTENT,
-  MAX_CONTENT_SIZE,
-  STYLE_SIZE,
-  DAY_SWEEP_SECONDS,
-  DEFAULT_STRENGTH,
-  DEFAULT_PALETTE_MATCH,
-} from './config.js';
-import {
-  initBackend,
-  loadModels,
-  predictStyleBottleneck,
-  makeContentTensor,
-  lerpBottleneck,
-  applyStrength,
-  imageColorStats,
-  matchPalette,
-  stylize,
-} from './model.js';
 import { sortAnchors, locate, formatClock } from './enveloppe.js';
+import { createRepaint } from './repaint.js';
+import { loadScene, offlineSceneFromImage } from './scene.js';
+import { fetchGallery } from './gallery.js';
+import {
+  API_ENDPOINT,
+  KEYFRAMES,
+  DISPLAY_MAX_EDGE,
+  UPLOAD_MAX_EDGE,
+  DAY_SWEEP_SECONDS,
+  DEFAULT_DRIFT,
+  REPAINT,
+} from './config.js';
 
 const els = {
   stage: document.getElementById('stage'),
   canvas: document.getElementById('canvas'),
   slider: document.getElementById('timeSlider'),
+  marks: document.getElementById('keyframeMarks'),
   clock: document.getElementById('clock'),
   periodLabel: document.getElementById('periodLabel'),
   playBtn: document.getElementById('playBtn'),
-  strength: document.getElementById('strengthSlider'),
-  strengthVal: document.getElementById('strengthVal'),
-  palette: document.getElementById('paletteSlider'),
-  paletteVal: document.getElementById('paletteVal'),
   dropzone: document.getElementById('dropzone'),
   fileInput: document.getElementById('fileInput'),
-  refStrip: document.getElementById('refStrip'),
+  gallery: document.getElementById('galleryStrip'),
   loader: document.getElementById('loader'),
   loaderText: document.getElementById('loaderText'),
   loaderBar: document.getElementById('loaderBar'),
-  backend: document.getElementById('backend'),
+  source: document.getElementById('source'),
   fps: document.getElementById('fps'),
+  toast: document.getElementById('toast'),
 };
 
 const state = {
-  refs: [],                // active palette, hydrated: { id, src, title, hour, bottleneck, colorStats }
-  sorted: [],              // sortAnchors(refs)
-  nextId: 1,
-  contentTensor: null,
-  contentBottleneck: null, // the photo's own style vector (for strength blend)
-  contentDims: { w: 0, h: 0 },
-  strength: DEFAULT_STRENGTH,
-  paletteMatch: DEFAULT_PALETTE_MATCH,
+  scenes: [],          // gallery descriptors (un-loaded)
+  scene: null,         // current loaded Scene
+  sorted: [],          // sortAnchors(scene.keyframes)
+  repaint: null,
   hour: 12,
   playing: false,
   rafId: null,
   lastTs: 0,
   fpsEma: 0,
+  renderedHour: null,  // last hour a full frame was drawn at (idle detection)
+  idleActive: false,   // currently running the ambient breathing loop
+  dirty: true,         // force a full re-render next frame (scene/knob change)
+  scrubbing: false,    // user is holding the timeline
+  resumeAfterScrub: true, // resume auto-advance on release (false if deliberately paused)
 };
+
+// ---------- timing curve ----------
+
+// Map linear segment progress t∈[0,1] → te with CONSTANT velocity across the
+// interior and a gentle (smoothstep) velocity ramp only inside the seam window
+// `s` at each end, never dropping below floor `vf` (so it's "never idle"). This
+// is the closed-form integral of that trapezoidal-ish velocity profile, so te is
+// C1-continuous and te(0)=0, te(1)=1. Linear within, soft only at the seams.
+const SEAM = 0.12, SEAM_FLOOR = 0.45;
+function seamEase(t, s = SEAM, vf = SEAM_FLOOR) {
+  if (t <= 0) return 0;
+  if (t >= 1) return 1;
+  const SI = (x) => x * x * x - 0.5 * x * x * x * x; // ∫₀ˣ smoothstep
+  const Z = 1 - s * (1 - vf);                        // ∫₀¹ velocity
+  let area;
+  if (t <= s) area = vf * t + (1 - vf) * s * SI(t / s);
+  else if (t <= 1 - s) area = 0.5 * s * (1 + vf) + (t - s);
+  else { const r = (1 - t) / s; area = Z - (vf * (1 - t) + (1 - vf) * s * SI(r)); }
+  return area / Z;
+}
 
 // ---------- image helpers ----------
 
@@ -71,177 +81,210 @@ function loadImage(src) {
   });
 }
 
-// Downscale a source so its longest edge is `maxSize`, return a canvas.
-function downscaleToCanvas(img, maxSize = MAX_CONTENT_SIZE) {
+function downscaleToJpegDataURL(img, maxEdge) {
   const sw = img.naturalWidth || img.width;
   const sh = img.naturalHeight || img.height;
-  const longEdge = Math.max(sw, sh);
-  const scale = Math.min(1, maxSize / longEdge);
-  const w = Math.max(1, Math.round(sw * scale));
-  const h = Math.max(1, Math.round(sh * scale));
+  const scale = Math.min(1, maxEdge / Math.max(sw, sh));
   const c = document.createElement('canvas');
-  c.width = w;
-  c.height = h;
-  c.getContext('2d').drawImage(img, 0, 0, w, h);
-  return c;
+  c.width = Math.max(1, Math.round(sw * scale));
+  c.height = Math.max(1, Math.round(sh * scale));
+  c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+  return c.toDataURL('image/jpeg', 0.9);
 }
 
-// ---------- reference (style) management ----------
+// ---------- scene wiring ----------
 
-// Evenly distribute the current references across the 24h day, in array order,
-// with a wrap segment from the last back to the first. No manual tagging needed.
-function assignHoursEvenly() {
-  const n = state.refs.length;
-  state.refs.forEach((ref, i) => {
-    ref.hour = n > 0 ? (i * 24) / n : 0;
-  });
-  state.sorted = sortAnchors(state.refs);
+function setScene(scene) {
+  state.scene = scene;
+  state.sorted = sortAnchors(scene.keyframes);
+  const { w, h } = scene.dims;
+
+  state.repaint.resize(w, h); // also sizes els.canvas
+
+  els.stage.style.aspectRatio = `${w} / ${h}`;
+  els.source.textContent = scene.placeholder ? 'placeholder' : 'gpt-image-2';
+
+  buildKeyframeMarks();
+  highlightGallery(scene.id);
+  state.dirty = true; // new scene: force a fresh render + idle re-snapshot
+  renderHour(state.hour);
 }
 
-// Extract and cache a style vector for one painting and add it to the set.
-// `thumbSrc` is used for the thumbnail; if omitted we snapshot the downscaled
-// canvas. The bottleneck is computed from a downscaled copy for a painterly look.
-function addStyle(image, title, thumbSrc) {
-  const scaled = downscaleToCanvas(image, STYLE_SIZE);
-  const bottleneck = predictStyleBottleneck(scaled); // cached, kept resident
-  const colorStats = imageColorStats(scaled);        // palette for colour match
-  const src = thumbSrc || scaled.toDataURL('image/jpeg', 0.85);
-  state.refs.push({ id: state.nextId++, title, src, bottleneck, colorStats });
-  assignHoursEvenly();
-  rebuildStrip();
-}
-
-// Hydrate the palette: load each painting and cache its style vector + colours.
-async function loadReferences(refs) {
-  for (const ref of refs) {
-    const img = await loadImage(ref.src);
-    addStyle(img, ref.title, ref.src);
-  }
-}
-
-// ---------- content management ----------
-
-async function setContentFromImage(img) {
-  const scaled = downscaleToCanvas(img, MAX_CONTENT_SIZE);
-  if (state.contentTensor) state.contentTensor.dispose();
-  if (state.contentBottleneck) state.contentBottleneck.dispose();
-  state.contentTensor = makeContentTensor(scaled);
-  // The photo's own style vector, used to dial stylization strength down.
-  state.contentBottleneck = predictStyleBottleneck(scaled);
-  state.contentDims = { w: scaled.width, h: scaled.height };
-  els.canvas.width = scaled.width;
-  els.canvas.height = scaled.height;
-  els.stage.style.aspectRatio = `${scaled.width} / ${scaled.height}`;
-  await renderHour(state.hour);
-}
-
-async function setContentFromFile(file) {
-  if (!file || !file.type.startsWith('image/')) return;
-  const url = URL.createObjectURL(file);
-  try {
-    const img = await loadImage(url);
-    await setContentFromImage(img);
-  } finally {
-    URL.revokeObjectURL(url);
-  }
-}
-
-// ---------- rendering ----------
-
-// Component-wise lerp of two { mean:[3], std:[3] } palette stats.
-function lerpStats(sa, sb, t) {
-  const mix = (x, y) => x.map((v, i) => v * (1 - t) + y[i] * t);
-  return { mean: mix(sa.mean, sb.mean), std: mix(sa.std, sb.std) };
-}
-
-async function renderHour(hour) {
-  if (!state.contentTensor || state.refs.length === 0) return;
+// One display frame at `hour`: locate the bracketing keyframes, drift A's colour
+// toward B by t (within-segment), then repaint B over the drifted A at progress t.
+function renderHour(hour) {
+  const scene = state.scene;
+  if (!scene) return;
   const { a, b, t } = locate(state.sorted, hour);
-  const refA = state.refs[a];
-  const refB = state.refs[b];
+  const kfA = scene.keyframes[a];
+  const kfB = scene.keyframes[b];
 
-  const styleBn = lerpBottleneck(refA.bottleneck, refB.bottleneck, t);
-  const bn = applyStrength(styleBn, state.contentBottleneck, state.strength);
-  styleBn.dispose();
+  // Soft-seam easing: the stroke-laying runs at CONSTANT velocity through the
+  // interior of a segment (so auto-advance paints at an even pace, not the
+  // ramp-up/ramp-down a full smoothstep gave), and only eases velocity down near
+  // the anchors so crossing a seam doesn't visibly "click". The repaint reveal AND
+  // its internal colour drift use this SAME te, staying in lockstep; te(0)=0 and
+  // te(1)=1 still hit exact A/B, so the anchor-pop fix and seam continuity hold.
+  const te = seamEase(t);
 
-  const out = stylize(state.contentTensor, bn);
-  bn.dispose();
+  // Pass RAW keyframes: repaint.js now does the colour/light drift itself, from
+  // B's spatially-varying low-frequency field (see setFrames), instead of the old
+  // flat global mean shift — same `drift` strength, but it reads as real light.
+  state.repaint.setFrames(kfA.canvas, kfB.canvas);
+  state.repaint.render(te);
 
-  // Pull the stylized colours toward the interpolated target palette.
-  const target = lerpStats(refA.colorStats, refB.colorStats, t);
-  const finalOut = matchPalette(out, target.mean, target.std, state.paletteMatch);
-  out.dispose();
-
-  await tf.browser.toPixels(finalOut, els.canvas);
-  finalOut.dispose();
-  updateTimeUI(hour);
+  updateTimeUI(hour, kfA, kfB, t);
 }
 
-function nearestRefTitle(hour) {
-  const { a, b, t } = locate(state.sorted, hour);
-  return (t < 0.5 ? state.refs[a] : state.refs[b]).title;
-}
-
-function updateTimeUI(hour) {
+function updateTimeUI(hour, kfA, kfB, t) {
   els.clock.textContent = formatClock(hour);
-  els.periodLabel.textContent = nearestRefTitle(hour);
+  els.periodLabel.textContent = t < 0.04 ? kfA.label : t > 0.96 ? kfB.label : `${kfA.label} → ${kfB.label}`;
   els.slider.value = String(hour);
-  highlightRefs(hour);
-}
-
-function highlightRefs(hour) {
-  const { a, b } = locate(state.sorted, hour);
-  const activeA = state.refs[a]?.id;
-  const activeB = state.refs[b]?.id;
-  els.refStrip.querySelectorAll('.ref').forEach((card) => {
-    const id = Number(card.dataset.id);
-    card.classList.toggle('active', id === activeA || id === activeB);
+  els.marks.querySelectorAll('.kf-mark').forEach((m) => {
+    const id = m.dataset.label;
+    m.classList.toggle('active', id === kfA.label || id === kfB.label);
   });
 }
 
-// ---------- reference strip ----------
+// ---------- keyframe markers (on the timeline) ----------
 
-function rebuildStrip() {
-  els.refStrip.innerHTML = '';
-  state.refs.forEach((ref) => {
-    const card = document.createElement('div');
-    card.className = 'ref';
-    card.dataset.id = String(ref.id);
-    card.title = `${ref.title} — jump to ${formatClock(ref.hour)}`;
-    card.innerHTML = `
-      <span class="ref-thumb" style="background-image:url('${ref.src}')"></span>
-      <span class="ref-meta">
-        <span class="ref-hour">${formatClock(ref.hour)}</span>
-        <span class="ref-title">${escapeHtml(ref.title)}</span>
-      </span>`;
-    card.addEventListener('click', () => {
+function buildKeyframeMarks() {
+  els.marks.innerHTML = '';
+  state.scene.keyframes.forEach((kf) => {
+    const m = document.createElement('button');
+    m.className = 'kf-mark';
+    m.dataset.label = kf.label;
+    m.style.left = `${(kf.hour / 24) * 100}%`;
+    m.title = `${kf.label} · ${formatClock(kf.hour)}`;
+    m.innerHTML = `<span class="kf-dot"></span><span class="kf-name">${kf.label}</span>`;
+    m.addEventListener('click', () => {
       setPlaying(false);
-      state.hour = ref.hour;
+      state.hour = kf.hour;
     });
-    els.refStrip.appendChild(card);
+    els.marks.appendChild(m);
   });
+}
+
+// ---------- gallery strip ----------
+
+function buildGalleryStrip(descs) {
+  els.gallery.innerHTML = '';
+  descs.forEach((d) => {
+    // Thumbnail = the Midday keyframe (the palest, most pastel light) — falls back
+    // to hour 12, then the first frame, then the placeholder source.
+    const kfs = d.keyframes;
+    const midday = kfs && (kfs.find((k) => k.label === 'Midday') || kfs.find((k) => k.hour === 12) || kfs[0]);
+    const thumb = midday ? midday.url : d.placeholder?.from;
+    const card = document.createElement('button');
+    card.className = 'ref';
+    card.dataset.id = d.id;
+    card.title = `Show “${d.title}”`;
+    card.innerHTML = `
+      <span class="ref-thumb" style="background-image:url('${thumb}')"></span>
+      <span class="ref-meta">
+        <span class="ref-title">${escapeHtml(d.title)}</span>
+      </span>`;
+    card.addEventListener('click', () => selectScene(d));
+    els.gallery.appendChild(card);
+  });
+}
+
+function highlightGallery(id) {
+  els.gallery.querySelectorAll('.ref').forEach((c) => c.classList.toggle('active', c.dataset.id === id));
+}
+
+async function selectScene(desc) {
+  try {
+    setPlaying(false);
+    const scene = await loadScene(desc, DISPLAY_MAX_EDGE);
+    setScene(scene);
+  } catch (e) {
+    console.error(e);
+    toast(`Couldn't load “${desc.title}”.`);
+  }
 }
 
 function escapeHtml(s) {
-  return s.replace(/[&<>"']/g, (c) =>
-    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])
-  );
+  return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// ---------- upload (live) with offline fallback ----------
+
+async function handleUpload(file) {
+  if (!file || !file.type.startsWith('image/')) return;
+  setPlaying(false);
+  const url = URL.createObjectURL(file);
+  let img;
+  try {
+    img = await loadImage(url);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+
+  showPainting();
+  try {
+    const dataUrl = downscaleToJpegDataURL(img, UPLOAD_MAX_EDGE);
+    const res = await fetch(API_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ imageBase64: dataUrl.split(',')[1], mime: 'image/jpeg' }),
+    });
+    if (!res.ok) {
+      const reason = res.status === 503 ? 'cap' : res.status === 429 ? 'busy' : 'http';
+      throw new Error(reason);
+    }
+    const data = await res.json();
+    const scene = await loadScene(
+      { id: data.uploadId || 'upload', title: 'Your scene', keyframes: data.keyframes },
+      DISPLAY_MAX_EDGE
+    );
+    stopPainting();
+    hideLoader();
+    setScene(scene);
+    toast('Painted your scene — scrub the day.');
+  } catch (e) {
+    // Never leave the visitor stranded: synthesize an offline preview so the
+    // whole upload → timeline → repaint UX still works without the live API.
+    const scene = await offlineSceneFromImage(img, DISPLAY_MAX_EDGE, KEYFRAMES);
+    stopPainting();
+    hideLoader();
+    setScene(scene);
+    toast(
+      e.message === 'cap'
+        ? 'The studio is at capacity today — showing an offline preview of your photo.'
+        : e.message === 'busy'
+          ? 'The studio is busy right now — showing an offline preview. Try again shortly.'
+          : 'Live painting runs on the deployed site — showing an offline preview here.',
+      6000
+    );
+  }
 }
 
 // ---------- loop / play ----------
 
-async function tick(ts) {
+function tick(ts) {
   if (state.lastTs) {
     const dt = (ts - state.lastTs) / 1000;
-    if (state.playing) {
-      state.hour = (state.hour + dt * (24 / DAY_SWEEP_SECONDS)) % 24;
-    }
+    if (state.playing) state.hour = (state.hour + dt * (24 / DAY_SWEEP_SECONDS)) % 24;
     const fps = 1 / Math.max(dt, 1e-3);
     state.fpsEma = state.fpsEma ? state.fpsEma * 0.9 + fps * 0.1 : fps;
     els.fps.textContent = `${state.fpsEma.toFixed(0)} fps`;
   }
   state.lastTs = ts;
-  await renderHour(state.hour);
+
+  // Moving (scrub/play/knob change): do the full transition render. Idle: stop
+  // re-rendering the same frame and instead run the cheap ambient breathing on a
+  // one-time snapshot — surface stays alive, the painting stays put, GPU stays cool.
+  const moving = state.playing || state.dirty || state.hour !== state.renderedHour;
+  if (moving) {
+    renderHour(state.hour);
+    state.renderedHour = state.hour;
+    state.dirty = false;
+    state.idleActive = false;
+  } else {
+    if (!state.idleActive) { state.repaint.beginIdle(); state.idleActive = true; }
+    state.repaint.breathe(ts);
+  }
   state.rafId = requestAnimationFrame(tick);
 }
 
@@ -259,7 +302,7 @@ function setPlaying(playing) {
   els.playBtn.querySelector('.label').textContent = playing ? 'Pause' : 'Play day';
 }
 
-// ---------- loader UI ----------
+// ---------- loader / toast ----------
 
 function setLoader(text, fraction) {
   els.loaderText.textContent = text;
@@ -270,9 +313,36 @@ function hideLoader() {
   els.loader.classList.add('hidden');
 }
 
+let paintingTimer = null;
+function showPainting() {
+  els.loader.classList.remove('hidden');
+  els.loaderBar.style.background = '';
+  const steps = ['Painting your scene…', 'Lighting the dawn…', 'Lighting midday…', 'Lighting the dusk…', 'Letting it dry…'];
+  let i = 0;
+  let pct = 8;
+  setLoader(steps[0], pct / 100);
+  paintingTimer = setInterval(() => {
+    i = Math.min(i + 1, steps.length - 1);
+    pct = Math.min(92, pct + (92 - pct) * 0.4);
+    setLoader(steps[i], pct / 100);
+  }, 1700);
+}
+function stopPainting() {
+  if (paintingTimer) clearInterval(paintingTimer);
+  paintingTimer = null;
+}
+
+let toastTimer = null;
+function toast(msg, ms = 4200) {
+  els.toast.textContent = msg;
+  els.toast.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => els.toast.classList.remove('show'), ms);
+}
+
 // ---------- wiring ----------
 
-function bindDropzone(el, onFiles, multiple) {
+function bindDropzone(el, onFile) {
   ['dragenter', 'dragover'].forEach((ev) =>
     el.addEventListener(ev, (e) => {
       e.preventDefault();
@@ -286,43 +356,59 @@ function bindDropzone(el, onFiles, multiple) {
     })
   );
   el.addEventListener('drop', (e) => {
-    const files = e.dataTransfer?.files;
-    if (!files?.length) return;
-    onFiles(multiple ? files : [files[0]]);
+    const file = e.dataTransfer?.files?.[0];
+    if (file) onFile(file);
   });
 }
 
 function wireControls() {
+  // Scrub handoff: grabbing the timeline pauses auto-advance and the position
+  // follows the cursor; releasing RESUMES auto-advance from wherever it was left
+  // (the clock carries on from there — it never jumps back to where it "would"
+  // have been). Because the thumb tracks the moving clock, grabbing it doesn't
+  // snap. Pause vs auto-resume is remembered so a deliberate Pause stays paused.
+  const beginScrub = () => {
+    if (state.scrubbing) return;
+    state.scrubbing = true;
+    state.resumeAfterScrub = state.playing;
+    state.playing = false;
+  };
+  const endScrub = () => {
+    if (!state.scrubbing) return;
+    state.scrubbing = false;
+    if (state.resumeAfterScrub) setPlaying(true); // carry on from the released hour
+  };
+  els.slider.addEventListener('pointerdown', beginScrub);
   els.slider.addEventListener('input', () => {
-    setPlaying(false);
+    beginScrub(); // covers keyboard scrubbing too (no pointerdown)
     state.hour = Number(els.slider.value);
   });
-
-  els.playBtn.addEventListener('click', () => setPlaying(!state.playing));
-
-  els.strength.addEventListener('input', () => {
-    state.strength = Number(els.strength.value);
-    els.strengthVal.textContent = `${Math.round(state.strength * 100)}%`;
+  els.slider.addEventListener('change', endScrub); // fires on release / keyboard commit
+  window.addEventListener('pointerup', endScrub);   // release even if off the track
+  els.playBtn.addEventListener('click', () => {
+    setPlaying(!state.playing);
+    state.resumeAfterScrub = state.playing; // a deliberate pause must survive a scrub
   });
-
-  els.palette.addEventListener('input', () => {
-    state.paletteMatch = Number(els.palette.value);
-    els.paletteVal.textContent = `${Math.round(state.paletteMatch * 100)}%`;
-  });
-
-  // Content photo
   els.fileInput.addEventListener('change', (e) => {
     const file = e.target.files?.[0];
-    if (file) setContentFromFile(file);
+    if (file) handleUpload(file);
   });
-  bindDropzone(els.dropzone, (files) => setContentFromFile(files[0]), false);
-
-  // Paste an image as the content photo.
+  bindDropzone(els.dropzone, handleUpload);
   window.addEventListener('paste', (e) => {
-    const item = [...(e.clipboardData?.items || [])].find((i) =>
-      i.type.startsWith('image/')
-    );
-    if (item) setContentFromFile(item.getAsFile());
+    const item = [...(e.clipboardData?.items || [])].find((i) => i.type.startsWith('image/'));
+    if (item) handleUpload(item.getAsFile());
+  });
+
+  // Fully stop the rAF loop when the tab is hidden (rAF already throttles, but a
+  // hard stop guarantees the idle breathing burns zero cycles in the background).
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      if (state.rafId != null) { cancelAnimationFrame(state.rafId); state.rafId = null; }
+    } else {
+      state.lastTs = 0;        // avoid a giant dt on resume
+      state.dirty = true;      // repaint once, then resume breathing
+      startLoop();
+    }
   });
 }
 
@@ -330,41 +416,49 @@ function wireControls() {
 
 async function boot() {
   wireControls();
+  // Dev dab-tuning override (inert unless a param is present): ?dens=&size=&budget=&fade=
+  // — lets validate/{fps-probe,capture-dabs}.mjs sweep the repaint knobs without a rebuild.
+  const qp = new URLSearchParams(location.search);
+  const numq = (k) => (qp.has(k) ? Number(qp.get(k)) : undefined);
+  const repaintOverride = {};
+  for (const key of ['dens', 'size', 'budget', 'fade']) {
+    const v = numq(key);
+    if (Number.isFinite(v)) repaintOverride[key] = v;
+  }
+  state.repaint = createRepaint(els.canvas, { ...REPAINT, ...repaintOverride, drift: DEFAULT_DRIFT });
 
   try {
-    setLoader('Starting GPU backend…', 0.02);
-    const backend = await initBackend();
-    els.backend.textContent = backend.toUpperCase();
+    setLoader('Hanging the gallery…', 0.4);
+    state.scenes = await fetchGallery();
+    if (state.scenes.length) buildGalleryStrip(state.scenes);
 
-    setLoader('Downloading style model…', 0.05);
-    await loadModels((stage, f) => {
-      const base = stage === 'style' ? 0.05 : 0.5;
-      const span = stage === 'style' ? 0.45 : 0.4;
-      setLoader(
-        stage === 'style' ? 'Downloading style network…' : 'Downloading transform network…',
-        base + f * span
-      );
-    });
-
-    setLoader('Reading the light of the palette…', 0.9);
-    if (REFERENCES.length === 0) {
-      throw new Error('No paintings found in public/monet-refs.');
+    // Default view: first curated scene. Guaranteed non-empty — fall back to a
+    // bundled image recolored offline if the manifest is missing/unreachable.
+    if (state.scenes.length) {
+      setLoader('Mixing the light…', 0.7);
+      const scene = await loadScene(state.scenes[0], DISPLAY_MAX_EDGE);
+      setScene(scene);
+    } else {
+      const img = await loadImage('sample.jpg');
+      setScene(await offlineSceneFromImage(img, DISPLAY_MAX_EDGE, KEYFRAMES));
     }
-    await loadReferences(REFERENCES);
-
-    setLoader('Loading your photo…', 0.96);
-    const content = await loadImage(DEFAULT_CONTENT);
-    await setContentFromImage(content);
-
-    setLoader('Warming up…', 0.99);
-    await renderHour(state.hour);
 
     hideLoader();
+    setPlaying(true); // auto-advance is the default — the day paints continuously
     startLoop();
   } catch (err) {
     console.error(err);
-    setLoader(`Something went wrong: ${err.message}`, 1);
-    els.loaderBar.style.background = '#b4452f';
+    // Last-ditch: still try to show *something* rather than a broken screen.
+    try {
+      const img = await loadImage('sample.jpg');
+      setScene(await offlineSceneFromImage(img, DISPLAY_MAX_EDGE, KEYFRAMES));
+      hideLoader();
+      setPlaying(true);
+      startLoop();
+    } catch (e2) {
+      setLoader(`Something went wrong: ${err.message}`, 1);
+      els.loaderBar.style.background = '#b4452f';
+    }
   }
 }
 

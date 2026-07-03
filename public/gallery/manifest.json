@@ -1,0 +1,45 @@
+{
+  "_comment": "Curated gallery. Each scene lists the 3 GENERATED keyframe image URLs (hour/label/url) for midday/dusk/night — exactly what a live /api/enveloppe upload returns; DAWN is derived free client-side from the dusk frame (src/scene.js dawnFromCanvas), so it is NOT listed here. Real scenes are produced by scripts/gallery-gen.mjs from a source photo. scenes[0] is the default landing view.",
+  "scenes": [
+    {
+      "id": "riviera",
+      "title": "Villefranche Harbour",
+      "credit": "gpt-image-2 · relit keyframes",
+      "keyframes": [
+        { "hour": 12, "label": "Midday", "url": "gallery/riviera/midday.png" },
+        { "hour": 18, "label": "Dusk", "url": "gallery/riviera/dusk.png" },
+        { "hour": 22, "label": "Night", "url": "gallery/riviera/night.png" }
+      ]
+    },
+    {
+      "id": "tetons",
+      "title": "Grand Teton Reflection",
+      "credit": "gpt-image-2 · relit keyframes",
+      "keyframes": [
+        { "hour": 12, "label": "Midday", "url": "gallery/tetons/midday.png" },
+        { "hour": 18, "label": "Dusk", "url": "gallery/tetons/dusk.png" },
+        { "hour": 22, "label": "Night", "url": "gallery/tetons/night.png" }
+      ]
+    },
+    {
+      "id": "meadow",
+      "title": "River Meadow",
+      "credit": "gpt-image-2 · relit keyframes",
+      "keyframes": [
+        { "hour": 12, "label": "Midday", "url": "gallery/meadow/midday.png" },
+        { "hour": 18, "label": "Dusk", "url": "gallery/meadow/dusk.png" },
+        { "hour": 22, "label": "Night", "url": "gallery/meadow/night.png" }
+      ]
+    },
+    {
+      "id": "tubingen",
+      "title": "Tübingen Neckarfront",
+      "credit": "gpt-image-2 · validated keyframes",
+      "keyframes": [
+        { "hour": 12, "label": "Midday", "url": "gallery/tubingen/midday.jpg" },
+        { "hour": 18, "label": "Dusk", "url": "gallery/tubingen/dusk.jpg" },
+        { "hour": 22, "label": "Night", "url": "gallery/tubingen/night.png" }
+      ]
+    }
+  ]
+}

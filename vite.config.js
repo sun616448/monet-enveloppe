@@ -71,6 +71,8 @@ function monetRefsPlugin() {
 
 export default defineConfig({
   base: './',
+  // monetRefsPlugin still discovers public/monet-refs (used by the placeholder
+  // gallery and the writeup history); the live engine no longer imports it.
   plugins: [monetRefsPlugin()],
   server: {
     open: true,

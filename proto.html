@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PROTO — live drifting Gatys (throwaway)</title>
+    <style>
+      :root { color-scheme: dark; }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+        background: #0d0f12;
+        color: #d7dde3;
+        display: flex;
+        min-height: 100vh;
+      }
+      .stagewrap {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+      }
+      #stage {
+        image-rendering: auto;
+        max-width: 100%;
+        max-height: 88vh;
+        border-radius: 8px;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+        background: #000;
+      }
+      aside {
+        width: 320px;
+        padding: 24px 20px;
+        background: #15191e;
+        border-left: 1px solid #232a31;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+      h1 { font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: #8b97a3; margin: 0; }
+      .note { font-size: 12px; color: #768290; margin: 0; }
+      .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+      .big { font-size: 28px; font-weight: 600; color: #fff; font-variant-numeric: tabular-nums; }
+      label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #9aa6b2; }
+      input[type='range'] { width: 100%; accent-color: #6db3ff; }
+      button {
+        font: inherit;
+        padding: 9px 12px;
+        border-radius: 6px;
+        border: 1px solid #2c343d;
+        background: #1d242b;
+        color: #d7dde3;
+        cursor: pointer;
+      }
+      button:hover { background: #232b33; }
+      button.rec { border-color: #b8434a; color: #ff9aa0; }
+      .stat { display: flex; justify-content: space-between; font-variant-numeric: tabular-nums; }
+      .stat b { color: #fff; font-weight: 600; }
+      .bar { height: 4px; border-radius: 2px; background: #2a323b; overflow: hidden; }
+      .bar > i { display: block; height: 100%; background: linear-gradient(90deg, #6db3ff, #ffb066); }
+      .refs { display: flex; gap: 8px; }
+      .refs figure { margin: 0; flex: 1; text-align: center; }
+      .refs img { width: 100%; border-radius: 4px; display: block; }
+      .refs figcaption { font-size: 10px; color: #768290; margin-top: 4px; }
+    </style>
+  </head>
+  <body>
+    <div class="stagewrap">
+      <canvas id="stage"></canvas>
+    </div>
+    <aside>
+      <h1>Proto · live drifting Gatys</h1>
+      <p class="note">
+        Perpetual optimization, warm-started from the previous frame, with the
+        style target sliding between a Monet morning haystack and a sunset one.
+        Watch ~30s: elegant re-painting, or boiling shimmer?
+      </p>
+
+      <div class="row">
+        <span class="big" id="fps">—</span>
+        <span class="note">steps / sec<br />backend <b id="backend">—</b></span>
+      </div>
+
+      <div>
+        <div class="row"><span class="note">light phase</span><span id="phaseLbl" class="note">—</span></div>
+        <div class="bar"><i id="phaseBar" style="width: 0%"></i></div>
+      </div>
+
+      <div class="stat"><span>iteration</span><b id="iter">0</b></div>
+      <div class="stat"><span>working res</span><b id="resLbl">—</b></div>
+
+      <label>
+        cycle seconds (dawn↔dusk↔dawn) <span id="cycleLbl">24</span>
+        <input id="cycle" type="range" min="6" max="60" step="1" value="24" />
+      </label>
+      <label>
+        learning rate <span id="lrLbl">0.020</span>
+        <input id="lr" type="range" min="0.004" max="0.05" step="0.002" value="0.02" />
+      </label>
+      <label>
+        content weight <span id="cwLbl">5</span>
+        <input id="cw" type="range" min="0" max="40" step="1" value="5" />
+      </label>
+      <label>
+        steps per rendered frame <span id="speLbl">1</span>
+        <input id="spe" type="range" min="1" max="4" step="1" value="1" />
+      </label>
+
+      <div class="row">
+        <button id="pause">Pause</button>
+        <button id="reseed">Re-seed from photo</button>
+      </div>
+      <button id="rec" class="rec">● Record 15s → webm</button>
+
+      <div class="refs">
+        <figure>
+          <img id="refA" alt="dawn ref" />
+          <figcaption>morning (phase 0)</figcaption>
+        </figure>
+        <figure>
+          <img id="refB" alt="dusk ref" />
+          <figcaption>sunset (phase 1)</figcaption>
+        </figure>
+      </div>
+      <p class="note" id="status">loading…</p>
+    </aside>
+
+    <script type="module" src="/src/proto.js"></script>
+  </body>
+</html>

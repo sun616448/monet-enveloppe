@@ -37,7 +37,7 @@ body {
 /* ---------- masthead ---------- */
 
 .masthead {
-  max-width: 1180px;
+  max-width: 1440px;
   margin: 0 auto;
   padding: 56px 32px 24px;
 }
@@ -75,7 +75,7 @@ body {
 }
 
 .lede {
-  max-width: 60ch;
+  max-width: none;
   margin: 18px 0 0;
   color: var(--ink-soft);
   font-size: 16px;
@@ -88,16 +88,84 @@ body {
   color: var(--ink);
 }
 
-/* ---------- layout ---------- */
+/* ---------- gallery wall layout ---------- */
+/* Static Monet paintings hang left + right; the interactive painting is the big
+   center "main screen"; the scene selector sits on a shelf below it. */
 
-.layout {
-  max-width: 1180px;
+.gallery-wall {
+  max-width: 1440px;
   margin: 0 auto;
   padding: 24px 32px 40px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 320px;
-  gap: 36px;
+  grid-template-columns: minmax(150px, 220px) minmax(0, 1fr) minmax(150px, 220px);
+  gap: 40px;
   align-items: start;
+}
+
+/* the wings of the wall */
+.wall-wing {
+  display: flex;
+  flex-direction: column;
+  gap: 30px;
+  padding-top: 6px;
+}
+
+.wall-art {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  transition: transform 0.2s ease;
+}
+
+.wall-art:hover {
+  transform: translateY(-2px);
+}
+
+.wall-art-frame {
+  position: relative;
+  padding: 9px;
+  background: linear-gradient(160deg, #efe6d4, #e4d9c2);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  box-shadow: var(--shadow), inset 0 0 0 1px rgba(255, 255, 255, 0.45);
+}
+
+/* gilded inner frame, matching the main stage */
+.wall-art-frame::after {
+  content: '';
+  position: absolute;
+  inset: 5px;
+  border: 2px solid rgba(199, 154, 63, 0.4);
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+.wall-art-frame img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 1px;
+  box-shadow: 0 8px 20px -12px rgba(0, 0, 0, 0.55);
+}
+
+.wall-art figcaption {
+  font-family: var(--serif);
+  font-size: 14px;
+  line-height: 1.25;
+  color: var(--ink);
+  text-align: center;
+}
+
+.wall-art figcaption span {
+  display: block;
+  font-family: var(--sans);
+  font-size: 9.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  opacity: 0.75;
+  margin-top: 3px;
 }
 
 /* ---------- viewer ---------- */
@@ -385,15 +453,106 @@ body {
   max-width: 24ch;
 }
 
-/* reference strip */
+/* ---------- scene shelf (below the painting) ---------- */
 
+.scene-shelf {
+  margin-top: 34px;
+}
+
+.shelf-title {
+  font-family: var(--serif);
+  font-weight: 600;
+  font-size: 22px;
+  margin: 0 0 16px;
+}
+
+/* the scene selector is a horizontal shelf of framed paintings that STRETCHES to
+   fill the full width between the flanking wall paintings (auto-fit, not auto-fill,
+   so the items expand to fill instead of leaving empty phantom tracks). */
 .ref-strip {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 10px;
-  max-height: 420px;
-  overflow-y: auto;
-  padding-right: 2px;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 16px;
+}
+
+/* footer under the shelf: a full-width, prominent "try your own" CTA + a thin
+   stats line beneath it */
+.viewer-foot {
+  margin-top: 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* full-width call-to-action dropzone */
+.dropzone-cta {
+  width: 100%;
+  flex-direction: row;
+  align-items: center;
+  text-align: left;
+  gap: 20px;
+  padding: 24px 28px;
+  border: 1.5px dashed var(--gold);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(199, 154, 63, 0.06), rgba(180, 69, 47, 0.05));
+}
+
+.dropzone-cta:hover {
+  border-color: var(--accent);
+  background: linear-gradient(180deg, rgba(199, 154, 63, 0.1), rgba(180, 69, 47, 0.08));
+}
+
+.dropzone-cta .dropzone-icon {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border: none; /* no circle around the + */
+}
+
+/* recenter + enlarge the plus now that the circle is gone */
+.dropzone-cta .dropzone-icon::before,
+.dropzone-cta .dropzone-icon::after {
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.dropzone-cta .dropzone-icon::before {
+  width: 3px;
+  height: 24px;
+}
+
+.dropzone-cta .dropzone-icon::after {
+  width: 24px;
+  height: 3px;
+}
+
+.dropzone-cta .dropzone-text {
+  flex: 1;
+  max-width: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dropzone-cta .dropzone-text strong {
+  font-family: var(--serif);
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1.1;
+  color: var(--ink);
+}
+
+.dropzone-cta .dropzone-sub {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--ink-soft);
+  max-width: 52ch;
+}
+
+.viewer-foot .stats {
+  padding: 0 4px;
 }
 
 .ref {
@@ -424,11 +583,12 @@ body {
 .ref-thumb {
   display: block;
   width: 100%;
-  aspect-ratio: 1 / 1;
+  aspect-ratio: 4 / 3;
   background-size: cover;
   background-position: center;
   border-radius: 3px;
   filter: saturate(1.05);
+  box-shadow: inset 0 0 0 1px rgba(199, 154, 63, 0.35);
 }
 
 .ref-meta {
@@ -475,7 +635,7 @@ body {
 /* ---------- colophon ---------- */
 
 .colophon {
-  max-width: 1180px;
+  max-width: 1440px;
   margin: 0 auto;
   padding: 24px 32px 56px;
   display: flex;
@@ -539,11 +699,121 @@ body {
   color: var(--ink-soft);
 }
 
+/* ---------- keyframe markers on the timeline ---------- */
+
+.slider-wrap {
+  position: relative;
+}
+
+.keyframe-marks {
+  display: none; /* hide the red/white keyframe marker dots — declutter the timeline */
+}
+
+.kf-mark {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  pointer-events: auto;
+  font-family: var(--sans);
+}
+
+.kf-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--paper);
+  border: 2px solid var(--ink-soft);
+  transition: transform 0.15s ease, border-color 0.2s ease, background 0.2s ease;
+}
+
+.kf-name {
+  position: absolute;
+  top: 12px;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.kf-mark:hover .kf-name,
+.kf-mark.active .kf-name {
+  opacity: 1;
+}
+
+.kf-mark.active .kf-dot {
+  border-color: var(--accent);
+  background: var(--accent);
+  transform: scale(1.25);
+}
+
+/* the gallery cards are <button>s reusing .ref — normalize button chrome */
+.ref {
+  appearance: none;
+  width: 100%;
+  font: inherit;
+}
+
+/* ---------- toast ---------- */
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 28px;
+  transform: translate(-50%, 16px);
+  max-width: min(520px, 90vw);
+  background: var(--ink);
+  color: var(--paper);
+  font-size: 13.5px;
+  line-height: 1.5;
+  padding: 12px 18px;
+  border-radius: 999px;
+  box-shadow: var(--shadow);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.3s ease, transform 0.3s ease, visibility 0.3s ease;
+  z-index: 40;
+  text-align: center;
+}
+
+.toast.show {
+  opacity: 1;
+  visibility: visible;
+  transform: translate(-50%, 0);
+}
+
 /* ---------- responsive ---------- */
 
+/* below this, the wall wings would crowd the painting — drop to one wing each */
+@media (max-width: 1180px) {
+  .gallery-wall {
+    grid-template-columns: minmax(140px, 190px) minmax(0, 1fr) minmax(140px, 190px);
+    gap: 28px;
+  }
+  .wall-wing .wall-art:nth-child(n + 3) {
+    display: none; /* keep two paintings per side */
+  }
+}
+
+/* narrow: the wings are decorative — hide them, center the painting */
 @media (max-width: 920px) {
-  .layout {
+  .gallery-wall {
     grid-template-columns: 1fr;
+    max-width: 760px;
+    gap: 0;
+  }
+  .wall-wing {
+    display: none;
   }
   .masthead {
     padding-top: 40px;

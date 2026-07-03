@@ -3,10 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Monet Enveloppe — style transfer through the hours</title>
+    <title>Monet Enveloppe — a painted day, repainted hour by hour</title>
     <meta
       name="description"
-      content="Recreate Monet's série/enveloppe: watch a photo drift through the shifting light of a Monet series using real-time neural style transfer in your browser."
+      content="Monet's série/enveloppe: a photograph painted as a Monet, then repainted through dawn, midday and dusk — scrub the day and watch the brushstrokes relight."
     />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -28,18 +28,41 @@
       <div class="masthead-line">
         <span class="masthead-mark">l’enveloppe</span>
         <span class="masthead-dot">·</span>
-        <span class="masthead-sub">real-time neural style transfer</span>
+        <span class="masthead-sub">a painted day, repainted hour by hour</span>
       </div>
       <h1>Monet Enveloppe</h1>
       <p class="lede">
         Monet painted the same motif again and again to capture
-        <em>l’enveloppe</em> — the changing veil of light across a day. Drag the
-        hour, or press play, and watch your photograph drift through a single
-        Monet palette, blended frame by frame.
+        <em>l’enveloppe</em> — the changing veil of light across a day. Each scene
+        here is painted as a Monet, then <em>relit</em> at dawn, midday and dusk.
+        Drag the hour, or press play, and watch the brushstrokes repaint the light.
       </p>
     </header>
 
-    <main class="layout">
+    <main class="gallery-wall">
+      <!-- left wing: static Monet series paintings hung on the wall -->
+      <aside class="wall-wing wall-left">
+        <figure class="wall-art">
+          <div class="wall-art-frame">
+            <img src="monet-refs/_extras/rouen-golden.jpg" alt="Monet — Rouen Cathedral in full sun" loading="lazy" />
+          </div>
+          <figcaption>Rouen Cathedral, Full Sun<span>Claude Monet</span></figcaption>
+        </figure>
+        <figure class="wall-art">
+          <div class="wall-art-frame">
+            <img src="monet-refs/_extras/parliament-sunset.jpg" alt="Monet — Houses of Parliament at sunset" loading="lazy" />
+          </div>
+          <figcaption>Houses of Parliament, Sunset<span>Claude Monet</span></figcaption>
+        </figure>
+        <figure class="wall-art">
+          <div class="wall-art-frame">
+            <img src="monet-refs/_extras/haystack-sunset.jpeg" alt="Monet — Grainstack at sunset" loading="lazy" />
+          </div>
+          <figcaption>Grainstack, Sunset<span>Claude Monet</span></figcaption>
+        </figure>
+      </aside>
+
+      <!-- center: the interactive painting is the main screen -->
       <section class="viewer">
         <div id="stage" class="stage">
           <canvas id="canvas" class="stage-canvas"></canvas>
@@ -56,102 +79,78 @@
               <span id="clock" class="clock">12:00</span>
               <span id="periodLabel" class="period">Midday</span>
             </div>
-            <input
-              id="timeSlider"
-              class="slider"
-              type="range"
-              min="0"
-              max="24"
-              step="0.05"
-              value="12"
-              aria-label="Time of day"
-            />
+            <div class="slider-wrap">
+              <input
+                id="timeSlider"
+                class="slider"
+                type="range"
+                min="0"
+                max="24"
+                step="0.05"
+                value="12"
+                aria-label="Time of day"
+              />
+              <div id="keyframeMarks" class="keyframe-marks" aria-hidden="true"></div>
+            </div>
             <div class="ticks">
               <span>00</span><span>06</span><span>12</span><span>18</span><span>24</span>
             </div>
           </div>
         </div>
-      </section>
 
-      <aside class="sidebar">
-        <div class="panel">
-          <h2 class="panel-title">Your photograph</h2>
-          <label id="dropzone" class="dropzone" for="fileInput">
+        <!-- scene selector, on a shelf directly below the painting -->
+        <div class="scene-shelf">
+          <h2 class="shelf-title">Scenes in this gallery</h2>
+          <div id="galleryStrip" class="ref-strip"></div>
+        </div>
+
+        <div class="viewer-foot">
+          <label id="dropzone" class="dropzone dropzone-cta" for="fileInput">
             <span class="dropzone-icon" aria-hidden="true"></span>
             <span class="dropzone-text">
-              <strong>Drop a photo</strong> here, click to browse, or paste from
-              the clipboard
+              <strong>Try your own photo</strong>
+              <span class="dropzone-sub">
+                Drop it here, click to browse, or paste from the clipboard — one
+                painting is generated, then relit across the whole day.
+              </span>
             </span>
             <input id="fileInput" type="file" accept="image/*" hidden />
           </label>
-        </div>
-
-        <div class="panel">
-          <div class="panel-head">
-            <h2 class="panel-title">Stylization strength</h2>
-            <span id="strengthVal" class="panel-val">100%</span>
+          <div class="stats">
+            <span class="stat"><span id="source" class="stat-val">—</span> source</span>
+            <span class="stat"><span id="fps" class="stat-val">—</span></span>
           </div>
-          <input
-            id="strengthSlider"
-            class="slider slider-plain"
-            type="range"
-            min="0"
-            max="1"
-            step="0.01"
-            value="1"
-            aria-label="Stylization strength"
-          />
-          <p class="panel-note">
-            How strongly the Monet style is applied. Lower values blend back in
-            your photo's own colours — useful when a between-hours mix looks muddy.
-          </p>
         </div>
+      </section>
 
-        <div class="panel">
-          <div class="panel-head">
-            <h2 class="panel-title">Palette match</h2>
-            <span id="paletteVal" class="panel-val">60%</span>
+      <!-- right wing: static Monet series paintings hung on the wall -->
+      <aside class="wall-wing wall-right">
+        <figure class="wall-art">
+          <div class="wall-art-frame">
+            <img src="monet-refs/_extras/rouen-morning.jpg" alt="Monet — Rouen Cathedral in morning light" loading="lazy" />
           </div>
-          <input
-            id="paletteSlider"
-            class="slider slider-plain"
-            type="range"
-            min="0"
-            max="1"
-            step="0.01"
-            value="0.6"
-            aria-label="Palette match"
-          />
-          <p class="panel-note">
-            Re-keys the output's colours to the real painting's palette
-            (interpolated between the two nearest hours). The model captures
-            Monet's brushwork well but its colours drift — this restores them.
-          </p>
-        </div>
-
-        <div class="panel">
-          <div class="panel-head">
-            <h2 class="panel-title">The palette</h2>
+          <figcaption>Rouen Cathedral, Morning<span>Claude Monet</span></figcaption>
+        </figure>
+        <figure class="wall-art">
+          <div class="wall-art-frame">
+            <img src="monet-refs/_extras/parliament-sun-through-fog.jpeg" alt="Monet — Houses of Parliament, sun through fog" loading="lazy" />
           </div>
-          <div id="refStrip" class="ref-strip"></div>
-          <p class="panel-note">
-            A single palette of Monet's Venice lagoon, ordered from pale dawn
-            tones to saturated teal. The paintings are spaced across the day and
-            their colours interpolated, including across midnight, so the hue
-            drifts continuously. Click a painting to jump to its hour.
-          </p>
-        </div>
-
-        <div class="stats">
-          <span class="stat"><span id="backend" class="stat-val">—</span> backend</span>
-          <span class="stat"><span id="fps" class="stat-val">—</span></span>
-        </div>
+          <figcaption>Parliament, Sun Through Fog<span>Claude Monet</span></figcaption>
+        </figure>
+        <figure class="wall-art">
+          <div class="wall-art-frame">
+            <img src="monet-refs/_extras/haystack-midday.jpg" alt="Monet — Grainstack at midday" loading="lazy" />
+          </div>
+          <figcaption>Grainstack, Midday<span>Claude Monet</span></figcaption>
+        </figure>
       </aside>
     </main>
 
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
     <footer class="colophon">
-      <span>Fully client-side · TensorFlow.js · arbitrary image stylization (Ghiasi et al.)</span>
-      <span>Paintings: Claude Monet, public domain via Wikimedia Commons</span>
+      <span>Keyframes: OpenAI gpt-image-2 · brushstroke repaint + colour drift, client-side</span>
+      <span>Sample photo: Tübingen Neckarfront · Paintings: Claude Monet, public domain</span>
     </footer>
 
     <script type="module" src="/src/app.js"></script>
