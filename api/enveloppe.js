@@ -127,23 +127,28 @@ export default async function handler(req, res) {
     const base = KEYFRAMES.find((k) => k.kind === 'base');
     const baseBytes = await edit(BASE_PROMPT, bytes, mime || 'image/jpeg', addCost);
 
-    // relights — EDIT OF THE BASE, not the photo
+    // relights — EDIT OF THE BASE, not the photo. Each relight depends ONLY on
+    // the base (not on the other relights), so run them concurrently: the wall
+    // time becomes base + one relight instead of base + N-1 sequential ~40s
+    // calls, which is what was blowing past the function timeout.
     const pngByLabel = { [base.label]: baseBytes };
-    for (const kf of KEYFRAMES) {
-      if (kf.kind === 'base') continue;
-      pngByLabel[kf.label] = await edit(RELIGHT(LIGHTS[kf.light]), baseBytes, 'image/png', addCost);
-    }
+    await Promise.all(
+      KEYFRAMES.filter((k) => k.kind !== 'base').map(async (kf) => {
+        pngByLabel[kf.label] = await edit(RELIGHT(LIGHTS[kf.light]), baseBytes, 'image/png', addCost);
+      })
+    );
 
-    // store keyframes in Blob
-    const keyframes = [];
-    for (const kf of KEYFRAMES) {
-      const blob = await put(`enveloppe/${hash}/${kf.label.toLowerCase()}.png`, pngByLabel[kf.label], {
-        access: 'public',
-        contentType: 'image/png',
-        addRandomSuffix: true,
-      });
-      keyframes.push({ hour: kf.hour, label: kf.label, url: blob.url });
-    }
+    // store keyframes in Blob (uploads are independent — do them concurrently too)
+    const keyframes = await Promise.all(
+      KEYFRAMES.map(async (kf) => {
+        const blob = await put(`enveloppe/${hash}/${kf.label.toLowerCase()}.png`, pngByLabel[kf.label], {
+          access: 'public',
+          contentType: 'image/png',
+          addRandomSuffix: true,
+        });
+        return { hour: kf.hour, label: kf.label, url: blob.url };
+      })
+    );
     keyframes.sort((a, b) => a.hour - b.hour);
 
     await kv.set(`cache:${hash}`, { keyframes }, { ex: 60 * 60 * 24 * 30 });
