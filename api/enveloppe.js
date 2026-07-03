@@ -80,6 +80,12 @@ export default async function handler(req, res) {
 
     const inflight = await kv.incr('inflight');
     inflightInc = true;
+    // Self-heal: if a job is killed mid-generation (e.g. hits the function
+    // timeout) its decr never runs and this counter would wedge at >LIMIT
+    // forever, rejecting everyone with `busy`. A short TTL lets a leaked slot
+    // expire on its own. TTL is kept safely above the function's maxDuration so
+    // a legit long-running job never has its slot reaped before it decrements.
+    if (inflight === 1) await kv.expire('inflight', 180);
     if (inflight > CONCURRENCY_LIMIT) {
       await kv.decr('inflight');
       inflightInc = false;
