@@ -30,8 +30,11 @@ const MAX_BYTES = 12 * 1024 * 1024;
 // Per-IP caps: default ONE upload per IP per hour AND per day. (IP is a soft
 // signal — bypassable via VPN/other device — so DAILY_CAP above is what actually
 // bounds the bill; these just stop casual repeat uploads.)
-const IP_HOUR_LIMIT = Number(process.env.IP_HOUR_LIMIT || 1);
-const IP_DAY_LIMIT = Number(process.env.IP_DAY_LIMIT || 1);
+const IP_HOUR_LIMIT = Number(process.env.IP_HOUR_LIMIT || 10);
+const IP_DAY_LIMIT = Number(process.env.IP_DAY_LIMIT || 30);
+// Bump this to abandon poisoned rate-limit counters (e.g. after a debugging
+// session inflates them past the cap). Old keys expire on their own TTL.
+const RL_VER = 'v2';
 const CONCURRENCY_LIMIT = Number(process.env.CONCURRENCY_LIMIT || 2);
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -69,14 +72,20 @@ export default async function handler(req, res) {
     }
 
     const ip = ipOf(req);
-    const hKey = `rl:h:${ip}:${date}:${new Date().getUTCHours()}`;
-    const dKey = `rl:d:${ip}:${date}`;
+    const hKey = `rl:h:${RL_VER}:${ip}:${date}:${new Date().getUTCHours()}`;
+    const dKey = `rl:d:${RL_VER}:${ip}:${date}`;
     const h = await kv.incr(hKey);
     if (h === 1) await kv.expire(hKey, 3600);
     const d = await kv.incr(dKey);
     if (d === 1) await kv.expire(dKey, 86400);
-    if (h > IP_HOUR_LIMIT || d > IP_DAY_LIMIT)
+    if (h > IP_HOUR_LIMIT || d > IP_DAY_LIMIT) {
+      // Don't let a rejected attempt keep inflating the window — otherwise
+      // retries/probes dig the counter ever deeper past the cap and you stay
+      // blocked for the whole window even after raising the limit.
+      await kv.decr(hKey);
+      await kv.decr(dKey);
       return res.status(429).json({ error: 'rate_limited' });
+    }
 
     const inflight = await kv.incr('inflight');
     inflightInc = true;
