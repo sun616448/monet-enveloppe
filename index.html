@@ -66,6 +66,12 @@
       <section class="viewer">
         <div id="stage" class="stage">
           <canvas id="canvas" class="stage-canvas"></canvas>
+          <!-- localized loading spinner: shown over the painting while a scene or
+               upload is loading, so the page never re-flows or looks like a reload -->
+          <div id="stageBusy" class="stage-busy hidden" role="status" aria-live="polite" aria-hidden="true">
+            <div class="spinner" aria-hidden="true"></div>
+            <div id="stageBusyText" class="stage-busy-text"></div>
+          </div>
         </div>
 
         <div class="controls">

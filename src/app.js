@@ -16,6 +16,8 @@ import {
 const els = {
   stage: document.getElementById('stage'),
   canvas: document.getElementById('canvas'),
+  stageBusy: document.getElementById('stageBusy'),
+  stageBusyText: document.getElementById('stageBusyText'),
   slider: document.getElementById('timeSlider'),
   marks: document.getElementById('keyframeMarks'),
   clock: document.getElementById('clock'),
@@ -170,11 +172,12 @@ function buildKeyframeMarks() {
 function buildGalleryStrip(descs) {
   els.gallery.innerHTML = '';
   descs.forEach((d) => {
-    // Thumbnail = the Midday keyframe (the palest, most pastel light) — falls back
-    // to hour 12, then the first frame, then the placeholder source.
+    // Thumbnail = the ORIGINAL un-painted source photo (`photo`) — small and fast
+    // (~100–400 KB jpg) vs. a ~3 MB relit keyframe PNG. Falls back to the Midday
+    // keyframe, then hour 12 / first frame, then the placeholder source.
     const kfs = d.keyframes;
     const midday = kfs && (kfs.find((k) => k.label === 'Midday') || kfs.find((k) => k.hour === 12) || kfs[0]);
-    const thumb = midday ? midday.url : d.placeholder?.from;
+    const thumb = d.photo || (midday ? midday.url : d.placeholder?.from);
     const card = document.createElement('button');
     card.className = 'ref';
     card.dataset.id = d.id;
@@ -196,11 +199,15 @@ function highlightGallery(id) {
 async function selectScene(desc) {
   try {
     setPlaying(false);
+    highlightGallery(desc.id); // reflect the click immediately, before the load
+    showStageBusy('Loading…');
     const scene = await loadScene(desc, DISPLAY_MAX_EDGE);
     setScene(scene);
   } catch (e) {
     console.error(e);
     toast(`Couldn't load “${desc.title}”.`);
+  } finally {
+    hideStageBusy();
   }
 }
 
@@ -239,7 +246,6 @@ async function handleUpload(file) {
       DISPLAY_MAX_EDGE
     );
     stopPainting();
-    hideLoader();
     setScene(scene);
     toast('Painted your scene — scrub the day.');
   } catch (e) {
@@ -247,7 +253,6 @@ async function handleUpload(file) {
     // whole upload → timeline → repaint UX still works without the live API.
     const scene = await offlineSceneFromImage(img, DISPLAY_MAX_EDGE, KEYFRAMES);
     stopPainting();
-    hideLoader();
     setScene(scene);
     toast(
       e.message === 'cap'
@@ -313,23 +318,31 @@ function hideLoader() {
   els.loader.classList.add('hidden');
 }
 
+// Localized busy spinner over the painting (not the full-page loader). Keeps the
+// page in place — the visitor sees a spinner in lieu of the output while a scene
+// or upload loads, instead of the whole screen flashing back to a splash.
+function showStageBusy(text = '') {
+  els.stageBusyText.textContent = text;
+  els.stageBusy.classList.remove('hidden');
+}
+function hideStageBusy() {
+  els.stageBusy.classList.add('hidden');
+}
+
 let paintingTimer = null;
 function showPainting() {
-  els.loader.classList.remove('hidden');
-  els.loaderBar.style.background = '';
   const steps = ['Painting your scene…', 'Lighting the dawn…', 'Lighting midday…', 'Lighting the dusk…', 'Letting it dry…'];
   let i = 0;
-  let pct = 8;
-  setLoader(steps[0], pct / 100);
+  showStageBusy(steps[0]);
   paintingTimer = setInterval(() => {
     i = Math.min(i + 1, steps.length - 1);
-    pct = Math.min(92, pct + (92 - pct) * 0.4);
-    setLoader(steps[i], pct / 100);
+    els.stageBusyText.textContent = steps[i];
   }, 1700);
 }
 function stopPainting() {
   if (paintingTimer) clearInterval(paintingTimer);
   paintingTimer = null;
+  hideStageBusy();
 }
 
 let toastTimer = null;

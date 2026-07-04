@@ -202,6 +202,52 @@ body {
   object-fit: contain;
 }
 
+/* localized busy overlay — sits over the canvas (inset matches .stage padding)
+   so a loading scene/upload shows a spinner in place, not a full-page reload */
+.stage-busy {
+  position: absolute;
+  inset: 18px;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  border-radius: 1px;
+  background: rgba(231, 221, 202, 0.86);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+  transition: opacity 0.22s ease;
+}
+.stage-busy.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+.spinner {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  border: 3px solid rgba(60, 50, 30, 0.18);
+  border-top-color: rgba(199, 154, 63, 0.95);
+  animation: stage-spin 0.9s linear infinite;
+}
+@keyframes stage-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.stage-busy-text {
+  font-family: 'Cormorant Garamond', serif;
+  font-size: 1.05rem;
+  letter-spacing: 0.01em;
+  color: #5a4a2e;
+}
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation-duration: 1.8s;
+  }
+}
+
 /* ---------- controls ---------- */
 
 .controls {
