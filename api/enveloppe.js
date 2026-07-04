@@ -11,9 +11,10 @@
 //   - reserve estimated spend up front, reconcile to measured cost after.
 //
 // Secrets/integrations are provided by the Vercel project env (you set them):
-//   OPENAI_API_KEY, plus the KV + Blob integration vars. DAILY_CAP optional.
+//   OPENAI_API_KEY, plus the KV integration vars. DAILY_CAP optional.
+// The painted keyframes are returned INLINE as base64 data URLs (no Blob store
+// to configure); the browser loads them straight from the JSON response.
 import { kv } from '@vercel/kv';
-import { put } from '@vercel/blob';
 import crypto from 'node:crypto';
 import { BASE_PROMPT, RELIGHT, LIGHTS, KEYFRAMES, QUALITY } from './_prompts.js';
 
@@ -64,13 +65,10 @@ export default async function handler(req, res) {
   let reserved = false;
   let inflightInc = false;
 
-  // ---- cache + cost protection. FAIL CLOSED: any KV error => refuse. ----
+  // ---- cost protection. FAIL CLOSED: any KV error => refuse. ----
+  // (No result cache: the painted keyframes are multi-MB base64 and won't fit a
+  // KV value, so every upload regenerates. DAILY_CAP still bounds the spend.)
   try {
-    const cached = await kv.get(`cache:${hash}`);
-    if (cached) {
-      return res.status(200).json({ uploadId: hash, quality: QUALITY, cached: true, keyframes: cached.keyframes });
-    }
-
     const ip = ipOf(req);
     const hKey = `rl:h:${RL_VER}:${ip}:${date}:${new Date().getUTCHours()}`;
     const dKey = `rl:d:${RL_VER}:${ip}:${date}`;
@@ -138,20 +136,15 @@ export default async function handler(req, res) {
       })
     );
 
-    // store keyframes in Blob (uploads are independent — do them concurrently too)
-    const keyframes = await Promise.all(
-      KEYFRAMES.map(async (kf) => {
-        const blob = await put(`enveloppe/${hash}/${kf.label.toLowerCase()}.png`, pngByLabel[kf.label], {
-          access: 'public',
-          contentType: 'image/png',
-          addRandomSuffix: true,
-        });
-        return { hour: kf.hour, label: kf.label, url: blob.url };
-      })
-    );
+    // return keyframes INLINE as base64 data URLs — the browser loads them
+    // directly (scene.js does `img.src = keyframe.url`), so no Blob store needed.
+    const keyframes = KEYFRAMES.map((kf) => ({
+      hour: kf.hour,
+      label: kf.label,
+      url: `data:image/png;base64,${pngByLabel[kf.label].toString('base64')}`,
+    }));
     keyframes.sort((a, b) => a.hour - b.hour);
 
-    await kv.set(`cache:${hash}`, { keyframes }, { ex: 60 * 60 * 24 * 30 });
     await reconcile(spendKey, actualCost);
     await kv.decr('inflight');
     return res.status(200).json({ uploadId: hash, quality: QUALITY, keyframes });
