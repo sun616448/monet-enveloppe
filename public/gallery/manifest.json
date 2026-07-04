@@ -7,9 +7,9 @@
       "credit": "gpt-image-2 · relit keyframes",
       "photo": "gallery/monet_gallery1.jpg",
       "keyframes": [
-        { "hour": 12, "label": "Midday", "url": "gallery/riviera/midday.png" },
-        { "hour": 18, "label": "Dusk", "url": "gallery/riviera/dusk.png" },
-        { "hour": 22, "label": "Night", "url": "gallery/riviera/night.png" }
+        { "hour": 12, "label": "Midday", "url": "gallery/riviera/midday.jpg" },
+        { "hour": 18, "label": "Dusk", "url": "gallery/riviera/dusk.jpg" },
+        { "hour": 22, "label": "Night", "url": "gallery/riviera/night.jpg" }
       ]
     },
     {
@@ -18,9 +18,9 @@
       "credit": "gpt-image-2 · relit keyframes",
       "photo": "gallery/monet_gallery3.jpg",
       "keyframes": [
-        { "hour": 12, "label": "Midday", "url": "gallery/tetons/midday.png" },
-        { "hour": 18, "label": "Dusk", "url": "gallery/tetons/dusk.png" },
-        { "hour": 22, "label": "Night", "url": "gallery/tetons/night.png" }
+        { "hour": 12, "label": "Midday", "url": "gallery/tetons/midday.jpg" },
+        { "hour": 18, "label": "Dusk", "url": "gallery/tetons/dusk.jpg" },
+        { "hour": 22, "label": "Night", "url": "gallery/tetons/night.jpg" }
       ]
     },
     {
@@ -29,9 +29,9 @@
       "credit": "gpt-image-2 · relit keyframes",
       "photo": "gallery/monet_gallery2.jpg",
       "keyframes": [
-        { "hour": 12, "label": "Midday", "url": "gallery/meadow/midday.png" },
-        { "hour": 18, "label": "Dusk", "url": "gallery/meadow/dusk.png" },
-        { "hour": 22, "label": "Night", "url": "gallery/meadow/night.png" }
+        { "hour": 12, "label": "Midday", "url": "gallery/meadow/midday.jpg" },
+        { "hour": 18, "label": "Dusk", "url": "gallery/meadow/dusk.jpg" },
+        { "hour": 22, "label": "Night", "url": "gallery/meadow/night.jpg" }
       ]
     },
     {
@@ -42,7 +42,7 @@
       "keyframes": [
         { "hour": 12, "label": "Midday", "url": "gallery/tubingen/midday.jpg" },
         { "hour": 18, "label": "Dusk", "url": "gallery/tubingen/dusk.jpg" },
-        { "hour": 22, "label": "Night", "url": "gallery/tubingen/night.png" }
+        { "hour": 22, "label": "Night", "url": "gallery/tubingen/night.jpg" }
       ]
     }
   ]
