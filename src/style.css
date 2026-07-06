@@ -110,6 +110,18 @@ body {
   padding-top: 6px;
 }
 
+/* Each wing holds two painting columns. Below the wide breakpoint the wall is a
+   single column, so only the outer column is shown (see the min-width:1560 rule
+   where the inner column is revealed and the outer one is staggered down). */
+.wall-col {
+  display: flex;
+  flex-direction: column;
+  gap: 30px;
+}
+.wall-col--inner {
+  display: none;
+}
+
 .wall-art {
   margin: 0;
   display: flex;
@@ -121,6 +133,11 @@ body {
 .wall-art:hover {
   transform: translateY(-2px);
 }
+
+/* Only the outer column (three paintings) hangs per wing by default; the inner
+   column is revealed on wide screens (see the min-width:1560 rule), where
+   there's margin room for a second column — filling the sides like a salon
+   gallery wall. */
 
 .wall-art-frame {
   position: relative;
@@ -155,17 +172,6 @@ body {
   line-height: 1.25;
   color: var(--ink);
   text-align: center;
-}
-
-.wall-art figcaption span {
-  display: block;
-  font-family: var(--sans);
-  font-size: 9.5px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: var(--ink-soft);
-  opacity: 0.75;
-  margin-top: 3px;
 }
 
 /* ---------- viewer ---------- */
@@ -841,12 +847,69 @@ body {
 /* ---------- responsive ---------- */
 
 /* below this, the wall wings would crowd the painting — drop to one wing each */
+/* Wide screens: the wall caps at 1440 on smaller windows, leaving empty margins.
+   Here we widen the wall into those margins and give each wing a second column
+   of paintings (all six shown), while the centre painting keeps its size (capped
+   at 860px) so only the sides grow. */
+@media (min-width: 1560px) {
+  .masthead,
+  .gallery-wall,
+  .colophon {
+    max-width: 1840px;
+  }
+  .gallery-wall {
+    grid-template-columns: minmax(300px, 1fr) minmax(0, 860px) minmax(300px, 1fr);
+    gap: 40px;
+  }
+  /* Two explicit painting columns per wing. The outer column (far-left of the
+     left wing, far-right of the right wing) is pushed DOWN by a proportional
+     offset so its paintings sit in the gaps between the inner column's — an
+     interlocking running-bond stagger instead of near-aligned rows.
+
+     The offset is a percentage of the wing's width (the flex container), and
+     each painting's height also scales with that width (image width ≈ half the
+     wing, height follows the fixed aspect ratio). So offset ÷ item-height stays
+     constant as the window resizes — the half-step stagger holds at every
+     width instead of drifting the way a fixed px margin would. */
+  .wall-wing {
+    display: flex;
+    flex-direction: row;
+    gap: 18px;
+    align-items: start;
+  }
+  .wall-right {
+    flex-direction: row-reverse; /* outer column lands on the far right */
+  }
+  .wall-col {
+    flex: 1 1 0;
+    min-width: 0;
+    gap: 22px;
+  }
+  .wall-col--inner {
+    display: flex; /* reveal the inner column (6 paintings per wing total) */
+  }
+  .wall-col--outer {
+    margin-top: 30%; /* ≈ half a painting's height; proportional, holds on resize */
+  }
+  .wall-wing .wall-art {
+    margin: 0;
+  }
+  /* Visual-weight arrangement (Option A): the tallest painting in each outer
+     column (a cathedral) is pulled to the column's centre so it reads against
+     the hero midline, with the shorter parliament/grainstack flowing outward
+     above and below. Flex `order` only — DOM keeps its motif order for the
+     single-column layouts below the breakpoint. */
+  .wall-col--outer .wall-art:nth-child(1) { order: 2; } /* tall cathedral → centre */
+  .wall-col--outer .wall-art:nth-child(2) { order: 1; } /* medium parliament → top */
+  .wall-col--outer .wall-art:nth-child(3) { order: 3; } /* short grainstack → bottom */
+}
+
 @media (max-width: 1180px) {
   .gallery-wall {
     grid-template-columns: minmax(140px, 190px) minmax(0, 1fr) minmax(140px, 190px);
     gap: 28px;
   }
-  .wall-wing .wall-art:nth-child(n + 3) {
+  .wall-col--outer .wall-art:nth-child(n + 3) {
     display: none; /* keep two paintings per side */
   }
 }

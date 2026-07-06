@@ -32,34 +32,71 @@
       </div>
       <h1>Monet Enveloppe</h1>
       <p class="lede">
-        Monet painted the same motif again and again to capture
-        <em>l’enveloppe</em> — the changing veil of light across a day. Each scene
-        here is painted as a Monet, then <em>relit</em> at dawn, midday and dusk.
-        Drag the hour, or press play, and watch the brushstrokes repaint the light.
+        Claude Monet painted the same haystack, the same cathedral, the same
+        stretch of river dozens of times. Not because he ran out of subjects, but
+        because the subject was never really the haystack. It was the light. He
+        called this <em>l’enveloppe</em>: the enveloping veil of atmosphere and
+        colour that settles over a scene and changes it completely from one hour to
+        the next. The same wall is cool and violet at dawn, blazing gold at noon,
+        and deep blue by dusk. Paint it once and you capture a thing. Paint it
+        through the day and you capture the light itself moving across it.
+      </p>
+      <p class="lede">
+        Each scene here is painted as a Monet would, then relit across the day:
+        dawn, midday, dusk, and night. Drag the hour, or press play, and watch the
+        brushstrokes lay themselves down again, repainting the same place in the
+        light of a different moment.
       </p>
     </header>
 
     <main class="gallery-wall">
-      <!-- left wing: static Monet series paintings hung on the wall -->
+      <!-- left wing: static Monet series paintings hung on the wall.
+           Two explicit columns so the outer one can be staggered down half an
+           item (see .wall-col--outer in the wide media query); the single-column
+           medium/narrow layouts show only the outer column. -->
       <aside class="wall-wing wall-left">
-        <figure class="wall-art">
-          <div class="wall-art-frame">
-            <img src="monet-refs/_extras/rouen-golden.jpg" alt="Monet — Rouen Cathedral in full sun" loading="lazy" />
-          </div>
-          <figcaption>Rouen Cathedral, Full Sun<span>Claude Monet</span></figcaption>
-        </figure>
-        <figure class="wall-art">
-          <div class="wall-art-frame">
-            <img src="monet-refs/_extras/parliament-sunset.jpg" alt="Monet — Houses of Parliament at sunset" loading="lazy" />
-          </div>
-          <figcaption>Houses of Parliament, Sunset<span>Claude Monet</span></figcaption>
-        </figure>
-        <figure class="wall-art">
-          <div class="wall-art-frame">
-            <img src="monet-refs/_extras/haystack-sunset.jpeg" alt="Monet — Grainstack at sunset" loading="lazy" />
-          </div>
-          <figcaption>Grainstack, Sunset<span>Claude Monet</span></figcaption>
-        </figure>
+        <div class="wall-col wall-col--outer">
+          <figure class="wall-art">
+            <div class="wall-art-frame">
+              <img src="monet-refs/_extras/rouen-golden.jpg" alt="Monet — Rouen Cathedral in full sun" loading="lazy" />
+            </div>
+            <figcaption>Rouen Cathedral, Full Sun</figcaption>
+          </figure>
+          <figure class="wall-art">
+            <div class="wall-art-frame">
+              <img src="monet-refs/_extras/parliament-sunset.jpg" alt="Monet — Houses of Parliament at sunset" loading="lazy" />
+            </div>
+            <figcaption>Houses of Parliament, Sunset</figcaption>
+          </figure>
+          <figure class="wall-art">
+            <div class="wall-art-frame">
+              <img src="monet-refs/_extras/haystack-sunset.jpeg" alt="Monet — Grainstack at sunset" loading="lazy" />
+            </div>
+            <figcaption>Grainstack, Sunset</figcaption>
+          </figure>
+        </div>
+        <!-- inner column: tallest painting placed in the MIDDLE (visual-weight
+             centring), shorter ones flowing out above and below. -->
+        <div class="wall-col wall-col--inner">
+          <figure class="wall-art">
+            <div class="wall-art-frame">
+              <img src="monet-refs/_extras/grainstacks-giverny-sunset.jpg" alt="Monet — Grainstacks at Giverny, sunset" loading="lazy" />
+            </div>
+            <figcaption>Grainstacks, Giverny Sunset</figcaption>
+          </figure>
+          <figure class="wall-art">
+            <div class="wall-art-frame">
+              <img src="monet-refs/_extras/rouen-blue.jpg" alt="Monet — Rouen Cathedral in blue light" loading="lazy" />
+            </div>
+            <figcaption>Rouen Cathedral, Blue Harmony</figcaption>
+          </figure>
+          <figure class="wall-art">
+            <div class="wall-art-frame">
+              <img src="monet-refs/_extras/wheatstack-mist.jpg" alt="Monet — Wheatstack, sun in the mist" loading="lazy" />
+            </div>
+            <figcaption>Wheatstack, Sun in the Mist</figcaption>
+          </figure>
+        </div>
       </aside>
 
       <!-- center: the interactive painting is the main screen -->
@@ -129,26 +166,50 @@
         </div>
       </section>
 
-      <!-- right wing: static Monet series paintings hung on the wall -->
+      <!-- right wing: static Monet series paintings hung on the wall.
+           Mirror of the left wing: the outer column (rendered on the far right in
+           the wide layout via row-reverse) is the one staggered down. -->
       <aside class="wall-wing wall-right">
-        <figure class="wall-art">
-          <div class="wall-art-frame">
-            <img src="monet-refs/_extras/rouen-morning.jpg" alt="Monet — Rouen Cathedral in morning light" loading="lazy" />
-          </div>
-          <figcaption>Rouen Cathedral, Morning<span>Claude Monet</span></figcaption>
-        </figure>
-        <figure class="wall-art">
-          <div class="wall-art-frame">
-            <img src="monet-refs/_extras/parliament-sun-through-fog.jpeg" alt="Monet — Houses of Parliament, sun through fog" loading="lazy" />
-          </div>
-          <figcaption>Parliament, Sun Through Fog<span>Claude Monet</span></figcaption>
-        </figure>
-        <figure class="wall-art">
-          <div class="wall-art-frame">
-            <img src="monet-refs/_extras/haystack-midday.jpg" alt="Monet — Grainstack at midday" loading="lazy" />
-          </div>
-          <figcaption>Grainstack, Midday<span>Claude Monet</span></figcaption>
-        </figure>
+        <div class="wall-col wall-col--outer">
+          <figure class="wall-art">
+            <div class="wall-art-frame">
+              <img src="monet-refs/_extras/rouen-morning.jpg" alt="Monet — Rouen Cathedral in morning light" loading="lazy" />
+            </div>
+            <figcaption>Rouen Cathedral, Morning</figcaption>
+          </figure>
+          <figure class="wall-art">
+            <div class="wall-art-frame">
+              <img src="monet-refs/_extras/parliament-sun-through-fog.jpeg" alt="Monet — Houses of Parliament, sun through fog" loading="lazy" />
+            </div>
+            <figcaption>Parliament, Sun Through Fog</figcaption>
+          </figure>
+          <figure class="wall-art">
+            <div class="wall-art-frame">
+              <img src="monet-refs/_extras/haystack-midday.jpg" alt="Monet — Grainstack at midday" loading="lazy" />
+            </div>
+            <figcaption>Grainstack, Midday</figcaption>
+          </figure>
+        </div>
+        <div class="wall-col wall-col--inner">
+          <figure class="wall-art">
+            <div class="wall-art-frame">
+              <img src="monet-refs/_extras/parliament-sunset-glow.jpg" alt="Monet — Houses of Parliament, sunset glow" loading="lazy" />
+            </div>
+            <figcaption>Houses of Parliament, Sunset</figcaption>
+          </figure>
+          <figure class="wall-art">
+            <div class="wall-art-frame">
+              <img src="monet-refs/_extras/poplars-epte.jpg" alt="Monet — Poplars in autumn on the Epte" loading="lazy" />
+            </div>
+            <figcaption>Poplars, Autumn</figcaption>
+          </figure>
+          <figure class="wall-art">
+            <div class="wall-art-frame">
+              <img src="monet-refs/_extras/haystacks-snow-sun.jpg" alt="Monet — Haystacks, effect of snow and sun" loading="lazy" />
+            </div>
+            <figcaption>Haystacks, Snow &amp; Sun</figcaption>
+          </figure>
+        </div>
       </aside>
     </main>
 
