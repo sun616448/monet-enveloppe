@@ -57,8 +57,12 @@ export const LIGHTS = {
 // dusk, and a REAL night (night needs invented dark content — moon, lit windows —
 // a filter can't fake). DAWN is NOT here: it's derived free client-side from the
 // dusk keyframe (see src/scene.js dawnFromCanvas), keeping cost at N=3.
+// `deferred: true` on Night means it's requested in a SECOND request (stage
+// 'night', see enveloppe.js) after the client already has midday+dusk and is
+// showing/scrubbable — cuts time-to-first-paint since the client no longer
+// waits for all 3 images before it can show anything.
 export const KEYFRAMES = [
   { hour: 12, label: 'Midday', kind: 'base' },
   { hour: 18, label: 'Dusk', kind: 'relight', light: 'dusk' },
-  { hour: 22, label: 'Night', kind: 'relight', light: 'night' },
+  { hour: 22, label: 'Night', kind: 'relight', light: 'night', deferred: true },
 ];

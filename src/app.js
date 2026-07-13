@@ -1,7 +1,7 @@
 import './style.css';
 import { sortAnchors, locate, formatClock } from './enveloppe.js';
 import { createRepaint } from './repaint.js';
-import { loadScene, offlineSceneFromImage } from './scene.js';
+import { loadScene, offlineSceneFromImage, addKeyframeToScene } from './scene.js';
 import { fetchGallery } from './gallery.js';
 import {
   API_ENDPOINT,
@@ -18,6 +18,7 @@ const els = {
   canvas: document.getElementById('canvas'),
   stageBusy: document.getElementById('stageBusy'),
   stageBusyText: document.getElementById('stageBusyText'),
+  stageBusyPreview: document.getElementById('stageBusyPreview'),
   slider: document.getElementById('timeSlider'),
   marks: document.getElementById('keyframeMarks'),
   clock: document.getElementById('clock'),
@@ -215,7 +216,81 @@ function escapeHtml(s) {
   return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-// ---------- upload (live) with offline fallback ----------
+// ---------- upload (live, streamed, two-stage) with offline fallback --------
+//
+// Two-stage: stage 'initial' returns midday+dusk (2 images) — the scene is
+// shown and scrubbable as soon as those land, instead of waiting on all 3.
+// The deferred 'night' relight is then requested separately in the background
+// and spliced into the already-visible scene when it arrives. Each stage is
+// itself an SSE stream of {partial,complete,done,error} events (see
+// api/enveloppe.js) so the busy overlay shows real in-progress previews
+// instead of sitting on a spinner for the whole wait.
+
+// Parse a fetch Response's SSE body into a stream of parsed JSON events.
+async function* sseEvents(response) {
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let idx;
+      while ((idx = buf.indexOf('\n\n')) !== -1) {
+        const raw = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        const dataLines = raw.split('\n').filter((l) => l.startsWith('data:'));
+        if (!dataLines.length) continue;
+        try { yield JSON.parse(dataLines.map((l) => l.slice(5).trim()).join('')); } catch {}
+      }
+    }
+  } finally {
+    // Runs on normal completion AND early exit (postStage throws on a
+    // `type:'error'` event mid-loop) — releases the reader either way.
+    reader.releaseLock();
+  }
+}
+
+function showBusyPreview(dataUrl) {
+  els.stageBusyPreview.src = dataUrl;
+  els.stageBusyPreview.classList.remove('hidden');
+  els.stageBusyPreview.classList.add('show');
+}
+function hideBusyPreview() {
+  els.stageBusyPreview.classList.remove('show');
+  els.stageBusyPreview.classList.add('hidden');
+  els.stageBusyPreview.src = '';
+}
+
+// POST one stage of the upload, streaming events. `onComplete(evt)` fires per
+// finished keyframe. Resolves with the terminal `done` event's payload; throws
+// with a `.message` of 'cap' | 'busy' | 'http' on failure, matching the toast
+// copy in handleUpload/growNightInBackground.
+async function postStage(body, onComplete) {
+  const res = await fetch(API_ENDPOINT, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    let code = 'http';
+    try {
+      const data = await res.json();
+      code = data.error === 'daily_cap' ? 'cap' : data.error === 'rate_limited' || data.error === 'busy' ? 'busy' : 'http';
+    } catch {}
+    throw new Error(code);
+  }
+  let done = null;
+  for await (const evt of sseEvents(res)) {
+    if (evt.type === 'partial') showBusyPreview(evt.dataUrl);
+    else if (evt.type === 'complete') { showBusyPreview(evt.dataUrl); onComplete(evt); }
+    else if (evt.type === 'done') done = evt;
+    else if (evt.type === 'error') throw new Error('http');
+  }
+  if (!done) throw new Error('http');
+  return done;
+}
 
 async function handleUpload(file) {
   if (!file || !file.type.startsWith('image/')) return;
@@ -231,23 +306,22 @@ async function handleUpload(file) {
   showPainting();
   try {
     const dataUrl = downscaleToJpegDataURL(img, UPLOAD_MAX_EDGE);
-    const res = await fetch(API_ENDPOINT, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ imageBase64: dataUrl.split(',')[1], mime: 'image/jpeg' }),
-    });
-    if (!res.ok) {
-      const reason = res.status === 503 ? 'cap' : res.status === 429 ? 'busy' : 'http';
-      throw new Error(reason);
-    }
-    const data = await res.json();
+    const keyframes = [];
+    const stageResult = await postStage(
+      { imageBase64: dataUrl.split(',')[1], mime: 'image/jpeg' },
+      (evt) => keyframes.push({ hour: evt.hour, label: evt.label, url: evt.dataUrl })
+    );
     const scene = await loadScene(
-      { id: data.uploadId || 'upload', title: 'Your scene', keyframes: data.keyframes },
+      { id: stageResult.uploadId || 'upload', title: 'Your scene', keyframes },
       DISPLAY_MAX_EDGE
     );
     stopPainting();
     setScene(scene);
     toast('Painted your scene — scrub the day.');
+
+    if (stageResult.deferred?.length && stageResult.baseImage) {
+      growSceneInBackground(scene, stageResult.baseImage);
+    }
   } catch (e) {
     // Never leave the visitor stranded: synthesize an offline preview so the
     // whole upload → timeline → repaint UX still works without the live API.
@@ -262,6 +336,27 @@ async function handleUpload(file) {
           : 'Live painting runs on the deployed site — showing an offline preview here.',
       6000
     );
+  }
+}
+
+// Fetches the deferred keyframe(s) (night) after the scene is already up and
+// scrubbable, and splices them in when ready. Best-effort: on failure the
+// scene just keeps its current anchors (a direct dusk→dawn crossfade across
+// the gap) — the visitor already has a working painting, so this never blocks
+// or shows an error toast for what's a background nicety.
+async function growSceneInBackground(scene, baseImageB64) {
+  try {
+    await postStage({ stage: 'night', baseImage: baseImageB64 }, async (evt) => {
+      await addKeyframeToScene(scene, { hour: evt.hour, label: evt.label, url: evt.dataUrl });
+      // Only touch the shared anchor cache if this scene is still the one on
+      // screen (the visitor may have switched to a gallery scene meanwhile).
+      if (state.scene === scene) {
+        state.sorted = sortAnchors(scene.keyframes);
+        state.dirty = true; // re-render at the current hour against the new anchor set
+      }
+    });
+  } catch {
+    // silent — see comment above
   }
 }
 
@@ -327,6 +422,7 @@ function showStageBusy(text = '') {
 }
 function hideStageBusy() {
   els.stageBusy.classList.add('hidden');
+  hideBusyPreview();
 }
 
 let paintingTimer = null;

@@ -1,33 +1,39 @@
-// POST /api/enveloppe  — upload a photo, get N relit Monet keyframes.
+// POST /api/enveloppe  — upload a photo, get Monet keyframes relit across the day.
 //
-// Flow: validate -> cache lookup -> cost protection -> 1 base generation +
-// (N-1) edit-of-base relights (gpt-image-2 @ medium) -> store keyframes in Blob
-// -> cache manifest in KV -> return { keyframes:[{hour,label,url}] }.
+// TWO-STAGE delivery (cuts time-to-first-paint): stage 'initial' (default) does
+// 1 base generation + 1 edit-of-base relight (midday + dusk) and streams back as
+// soon as those two are done — the client can already show/scrub the scene. A
+// SECOND request, stage 'night', does the last (deferred) relight from the base
+// image the first response handed back, so the photo/base never regenerates.
 //
-// COST PROTECTION (per the locked design):
-//   - hard daily SPEND cap ($5), FAIL CLOSED: if the KV spend counter can't be
-//     read/written, the job is REFUSED (503), never allowed through.
-//   - per-IP rate limit (3/hr, 5/day) + global concurrency cap (~2 in flight).
-//   - reserve estimated spend up front, reconcile to measured cost after.
+// Each stage is itself streamed via SSE using OpenAI's partial-image streaming:
+// the client gets rough in-progress previews as each image renders, not just a
+// spinner, THEN a `complete` event per keyframe, THEN a final `done` event.
+//
+// COST PROTECTION (per the locked design, unchanged by staging):
+//   - hard daily SPEND cap ($5 default), FAIL CLOSED: if the KV spend counter
+//     can't be read/written, the job is REFUSED (503), never allowed through.
+//   - per-IP rate limit (hour/day) + global concurrency cap, checked per stage.
+//   - reserve estimated spend up front (sized to that stage's image count),
+//     reconcile to measured cost after.
 //
 // Secrets/integrations are provided by the Vercel project env (you set them):
 //   OPENAI_API_KEY, plus the KV integration vars. DAILY_CAP optional.
-// The painted keyframes are returned INLINE as base64 data URLs (no Blob store
-// to configure); the browser loads them straight from the JSON response.
+// Keyframes are returned INLINE as base64 data URLs (no Blob store to
+// configure); the browser loads them straight from the stream.
 import { kv } from '@vercel/kv';
 import crypto from 'node:crypto';
 import { BASE_PROMPT, RELIGHT, LIGHTS, KEYFRAMES, QUALITY } from './_prompts.js';
 
-// All limits are env-tunable (change on Vercel without a redeploy of code).
-// DAILY_CAP is the HARD global ceiling on spend/day and the real backstop — the
-// job is refused once the day's reserved+measured spend would exceed it.
 const DAILY_CAP = Number(process.env.DAILY_CAP || 1); // USD/day, hard stop
-const N = KEYFRAMES.length;
-const EST_PER_IMAGE = 0.06; // conservative reservation (medium measured ~$0.053)
-const EST_JOB = Number((EST_PER_IMAGE * N).toFixed(4));
+const IMMEDIATE_KEYFRAMES = KEYFRAMES.filter((k) => !k.deferred); // midday, dusk
+const DEFERRED_KEYFRAMES = KEYFRAMES.filter((k) => k.deferred); // night
+const EST_PER_IMAGE = 0.06; // conservative reservation (medium measured ~$0.053; low is cheaper)
+const EST_INITIAL = Number((EST_PER_IMAGE * IMMEDIATE_KEYFRAMES.length).toFixed(4));
+const EST_NIGHT = Number((EST_PER_IMAGE * DEFERRED_KEYFRAMES.length).toFixed(4));
 const RATE = { img: 8 / 1e6, txt: 5 / 1e6, out: 30 / 1e6 }; // gpt-image-2 $/token
-const PROMPT_VERSION = 'v1';
 const MAX_BYTES = 12 * 1024 * 1024;
+const PARTIAL_IMAGES = 2; // in-progress previews per generated image (0-3 supported)
 // Per-IP caps: default ONE upload per IP per hour AND per day. (IP is a soft
 // signal — bypassable via VPN/other device — so DAILY_CAP above is what actually
 // bounds the bill; these just stop casual repeat uploads.)
@@ -43,9 +49,15 @@ const ipOf = (req) => (req.headers['x-forwarded-for'] || '').split(',')[0].trim(
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
+  const body = req.body || {};
+  if (body.stage === 'night') return handleNight(req, res, body);
+  return handleInitial(req, res, body);
+}
 
-  // ---- validate (free, pre-flight) ----
-  const { imageBase64, mime } = req.body || {};
+// ---- stage: initial (midday + dusk) ----------------------------------------
+
+async function handleInitial(req, res, body) {
+  const { imageBase64, mime } = body;
   if (!imageBase64 || typeof imageBase64 !== 'string')
     return res.status(400).json({ error: 'missing imageBase64' });
   if (mime && !/^image\//.test(mime)) return res.status(400).json({ error: 'not an image' });
@@ -53,23 +65,101 @@ export default async function handler(req, res) {
   if (bytes.length === 0 || bytes.length > MAX_BYTES)
     return res.status(400).json({ error: 'bad image size' });
 
-  const hash = crypto
-    .createHash('sha256')
-    .update(imageBase64)
-    .update(`|${N}|${QUALITY}|${PROMPT_VERSION}`)
-    .digest('hex')
-    .slice(0, 32);
+  const hash = crypto.createHash('sha256').update(imageBase64).update(`|initial|${QUALITY}`).digest('hex').slice(0, 32);
+  const date = today();
+  const budget = await reserveBudget(req, date, EST_INITIAL);
+  if (!budget.ok) return res.status(budget.status).json(budget.body);
+
+  const sse = openSSE(res);
+  let actualCost = 0;
+  const addCost = (c) => { actualCost += c; };
+  try {
+    if (!process.env.OPENAI_API_KEY) throw new Error('OPENAI_API_KEY not set');
+
+    const base = IMMEDIATE_KEYFRAMES.find((k) => k.kind === 'base');
+    const baseBytes = await streamedEdit(BASE_PROMPT, bytes, mime || 'image/jpeg', addCost, (b64) =>
+      sse.send({ type: 'partial', label: base.label, dataUrl: `data:image/png;base64,${b64}` })
+    );
+    sse.send({ type: 'complete', label: base.label, hour: base.hour, dataUrl: `data:image/png;base64,${baseBytes.toString('base64')}` });
+
+    const relights = IMMEDIATE_KEYFRAMES.filter((k) => k.kind !== 'base');
+    // relights are edits OF THE BASE and depend only on it, so run concurrently
+    await Promise.all(
+      relights.map(async (kf) => {
+        const png = await streamedEdit(RELIGHT(LIGHTS[kf.light]), baseBytes, 'image/png', addCost, (b64) =>
+          sse.send({ type: 'partial', label: kf.label, dataUrl: `data:image/png;base64,${b64}` })
+        );
+        sse.send({ type: 'complete', label: kf.label, hour: kf.hour, dataUrl: `data:image/png;base64,${png.toString('base64')}` });
+      })
+    );
+
+    await budget.reconcile(actualCost);
+    sse.send({
+      type: 'done',
+      uploadId: hash,
+      quality: QUALITY,
+      baseImage: DEFERRED_KEYFRAMES.length ? baseBytes.toString('base64') : undefined,
+      deferred: DEFERRED_KEYFRAMES.map((k) => ({ hour: k.hour, label: k.label })),
+    });
+  } catch (e) {
+    try { await budget.reconcile(actualCost); } catch {}
+    sse.send({ type: 'error', code: 'generation_failed', detail: String(e.message || e) });
+  } finally {
+    sse.end();
+  }
+}
+
+// ---- stage: night (deferred relight of the already-generated base) ---------
+
+async function handleNight(req, res, body) {
+  const { baseImage } = body;
+  if (!baseImage || typeof baseImage !== 'string')
+    return res.status(400).json({ error: 'missing baseImage' });
+  const baseBytes = Buffer.from(baseImage, 'base64');
+  if (baseBytes.length === 0 || baseBytes.length > MAX_BYTES)
+    return res.status(400).json({ error: 'bad image size' });
+  if (!DEFERRED_KEYFRAMES.length) return res.status(400).json({ error: 'nothing deferred' });
 
   const date = today();
+  const budget = await reserveBudget(req, date, EST_NIGHT);
+  if (!budget.ok) return res.status(budget.status).json(budget.body);
+
+  const sse = openSSE(res);
+  let actualCost = 0;
+  const addCost = (c) => { actualCost += c; };
+  try {
+    if (!process.env.OPENAI_API_KEY) throw new Error('OPENAI_API_KEY not set');
+
+    await Promise.all(
+      DEFERRED_KEYFRAMES.map(async (kf) => {
+        const png = await streamedEdit(RELIGHT(LIGHTS[kf.light]), baseBytes, 'image/png', addCost, (b64) =>
+          sse.send({ type: 'partial', label: kf.label, dataUrl: `data:image/png;base64,${b64}` })
+        );
+        sse.send({ type: 'complete', label: kf.label, hour: kf.hour, dataUrl: `data:image/png;base64,${png.toString('base64')}` });
+      })
+    );
+
+    await budget.reconcile(actualCost);
+    sse.send({ type: 'done' });
+  } catch (e) {
+    try { await budget.reconcile(actualCost); } catch {}
+    sse.send({ type: 'error', code: 'generation_failed', detail: String(e.message || e) });
+  } finally {
+    sse.end();
+  }
+}
+
+// ---- shared: rate limit + spend reservation ---------------------------------
+// Returns { ok:false, status, body } to send as a plain JSON rejection, or
+// { ok:true, reconcile(actualCost) } — reconcile swaps the up-front estimate
+// for the measured cost and always releases the concurrency slot, exactly once,
+// on both the success and failure paths.
+async function reserveBudget(req, date, estJob) {
   const spendKey = `spend:${date}`;
+  const ip = ipOf(req);
   let reserved = false;
   let inflightInc = false;
-
-  // ---- cost protection. FAIL CLOSED: any KV error => refuse. ----
-  // (No result cache: the painted keyframes are multi-MB base64 and won't fit a
-  // KV value, so every upload regenerates. DAILY_CAP still bounds the spend.)
   try {
-    const ip = ipOf(req);
     const hKey = `rl:h:${RL_VER}:${ip}:${date}:${new Date().getUTCHours()}`;
     const dKey = `rl:d:${RL_VER}:${ip}:${date}`;
     const h = await kv.incr(hKey);
@@ -82,87 +172,66 @@ export default async function handler(req, res) {
       // blocked for the whole window even after raising the limit.
       await kv.decr(hKey);
       await kv.decr(dKey);
-      return res.status(429).json({ error: 'rate_limited' });
+      return { ok: false, status: 429, body: { error: 'rate_limited' } };
     }
 
     const inflight = await kv.incr('inflight');
     inflightInc = true;
-    // Self-heal: if a job is killed mid-generation (e.g. hits the function
-    // timeout) its decr never runs and this counter would wedge at >LIMIT
-    // forever, rejecting everyone with `busy`. A short TTL lets a leaked slot
-    // expire on its own. TTL is kept safely above the function's maxDuration so
-    // a legit long-running job never has its slot reaped before it decrements.
+    // Self-heal: if a job is killed mid-generation its decr never runs and this
+    // counter would wedge at >LIMIT forever, rejecting everyone with `busy`. A
+    // short TTL lets a leaked slot expire on its own, safely below maxDuration.
     if (inflight === 1) await kv.expire('inflight', 180);
     if (inflight > CONCURRENCY_LIMIT) {
       await kv.decr('inflight');
       inflightInc = false;
-      return res.status(429).json({ error: 'busy' });
+      return { ok: false, status: 429, body: { error: 'busy' } };
     }
 
-    const newSpend = Number(await kv.incrbyfloat(spendKey, EST_JOB));
+    const newSpend = Number(await kv.incrbyfloat(spendKey, estJob));
     reserved = true;
-    if (Math.abs(newSpend - EST_JOB) < 1e-9) await kv.expire(spendKey, 172800);
+    if (Math.abs(newSpend - estJob) < 1e-9) await kv.expire(spendKey, 172800);
     if (newSpend > DAILY_CAP) {
-      await kv.incrbyfloat(spendKey, -EST_JOB);
+      await kv.incrbyfloat(spendKey, -estJob);
       reserved = false;
-      if (inflightInc) { await kv.decr('inflight'); inflightInc = false; }
-      return res.status(503).json({ error: 'daily_cap', cap: DAILY_CAP });
+      await kv.decr('inflight');
+      inflightInc = false;
+      return { ok: false, status: 503, body: { error: 'daily_cap', cap: DAILY_CAP } };
     }
   } catch (e) {
     // FAIL CLOSED — release best-effort and refuse.
-    try { if (reserved) await kv.incrbyfloat(spendKey, -EST_JOB); } catch {}
+    try { if (reserved) await kv.incrbyfloat(spendKey, -estJob); } catch {}
     try { if (inflightInc) await kv.decr('inflight'); } catch {}
-    return res.status(503).json({ error: 'unavailable' });
+    return { ok: false, status: 503, body: { error: 'unavailable' } };
   }
-
-  // ---- generation (own error handling; reconciles spend either way) ----
-  let actualCost = 0;
-  const addCost = (c) => { actualCost += c; };
-  try {
-    if (!process.env.OPENAI_API_KEY) throw new Error('OPENAI_API_KEY not set');
-
-    // base (midday) — the single generation from the photo
-    const base = KEYFRAMES.find((k) => k.kind === 'base');
-    const baseBytes = await edit(BASE_PROMPT, bytes, mime || 'image/jpeg', addCost);
-
-    // relights — EDIT OF THE BASE, not the photo. Each relight depends ONLY on
-    // the base (not on the other relights), so run them concurrently: the wall
-    // time becomes base + one relight instead of base + N-1 sequential ~40s
-    // calls, which is what was blowing past the function timeout.
-    const pngByLabel = { [base.label]: baseBytes };
-    await Promise.all(
-      KEYFRAMES.filter((k) => k.kind !== 'base').map(async (kf) => {
-        pngByLabel[kf.label] = await edit(RELIGHT(LIGHTS[kf.light]), baseBytes, 'image/png', addCost);
-      })
-    );
-
-    // return keyframes INLINE as base64 data URLs — the browser loads them
-    // directly (scene.js does `img.src = keyframe.url`), so no Blob store needed.
-    const keyframes = KEYFRAMES.map((kf) => ({
-      hour: kf.hour,
-      label: kf.label,
-      url: `data:image/png;base64,${pngByLabel[kf.label].toString('base64')}`,
-    }));
-    keyframes.sort((a, b) => a.hour - b.hour);
-
-    await reconcile(spendKey, actualCost);
-    await kv.decr('inflight');
-    return res.status(200).json({ uploadId: hash, quality: QUALITY, keyframes });
-  } catch (e) {
-    try { await reconcile(spendKey, actualCost); } catch {}
-    try { await kv.decr('inflight'); } catch {}
-    return res.status(502).json({ error: 'generation_failed', detail: String(e.message || e) });
-  }
+  return {
+    ok: true,
+    reconcile: async (actualCost) => {
+      try { await kv.incrbyfloat(spendKey, Number((actualCost - estJob).toFixed(4))); } catch {}
+      try { await kv.decr('inflight'); } catch {}
+    },
+  };
 }
 
-// Replace the up-front reservation with the actually-measured cost.
-async function reconcile(spendKey, actualCost) {
-  await kv.incrbyfloat(spendKey, Number((actualCost - EST_JOB).toFixed(4)));
+// ---- shared: our own SSE relay to the browser -------------------------------
+function openSSE(res) {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+  return {
+    send: (obj) => res.write(`data: ${JSON.stringify(obj)}\n\n`),
+    end: () => res.end(),
+  };
 }
 
-// One gpt-image-2 edit (multipart). Retries once on 5xx/429; measures cost from
-// the usage tokens. Rebuilds the form per attempt (FormData is single-use).
-async function edit(prompt, imgBytes, imgMime, addCost) {
+// ---- one gpt-image-2 edit (multipart, streamed) -----------------------------
+// Streams OpenAI's partial-image events through `onPartial(b64)` as they arrive,
+// and returns the final image bytes once the edit completes. Retries once on
+// 5xx/429 (a retried attempt just re-streams fresh partials — the caller only
+// ever cares about the latest one, so no special handling needed there).
+async function streamedEdit(prompt, imgBytes, imgMime, addCost, onPartial) {
   let lastErr = 'unknown';
   for (let attempt = 0; attempt < 2; attempt++) {
     const form = new FormData();
@@ -176,6 +245,8 @@ async function edit(prompt, imgBytes, imgMime, addCost) {
     form.append('size', '1024x1024');
     form.append('quality', QUALITY);
     form.append('n', '1');
+    form.append('stream', 'true');
+    form.append('partial_images', String(PARTIAL_IMAGES));
     form.append('image', new Blob([imgBytes], { type: imgMime }), imgMime === 'image/jpeg' ? 'in.jpg' : 'in.png');
 
     // Send the org explicitly when provided — without it the key uses its default
@@ -190,14 +261,62 @@ async function edit(prompt, imgBytes, imgMime, addCost) {
       body: form,
     });
     if (r.ok) {
-      const data = await r.json();
-      const u = data.usage || {};
-      const it = u.input_tokens_details || {};
-      addCost((it.image_tokens || 0) * RATE.img + (it.text_tokens || 0) * RATE.txt + (u.output_tokens || 0) * RATE.out);
-      return Buffer.from(data.data[0].b64_json, 'base64');
+      let finalB64 = null;
+      let usage = {};
+      try {
+        for await (const evt of sseEvents(r)) {
+          if (evt.type === 'image_edit.partial_image' && evt.b64_json) {
+            onPartial(evt.b64_json);
+          } else if (evt.type === 'image_edit.completed' && evt.b64_json) {
+            finalB64 = evt.b64_json;
+            usage = evt.usage || usage;
+          }
+        }
+      } catch (streamErr) {
+        lastErr = `stream error: ${streamErr.message || streamErr}`;
+        continue; // treat like a failed attempt, retry once
+      }
+      if (finalB64) {
+        const it = usage.input_tokens_details || {};
+        addCost((it.image_tokens || 0) * RATE.img + (it.text_tokens || 0) * RATE.txt + (usage.output_tokens || 0) * RATE.out);
+        return Buffer.from(finalB64, 'base64');
+      }
+      lastErr = 'stream ended without a completed image';
+      continue;
     }
     lastErr = `${r.status} ${await r.text()}`;
     if (r.status < 500 && r.status !== 429) break; // don't retry hard client errors
   }
   throw new Error(`edit failed: ${lastErr}`);
+}
+
+// Parse an SSE response body into a stream of parsed JSON event objects. Only
+// reads `data:` lines — event names (if any) are carried in the JSON's own
+// `type` field, so a bare `data:`-only stream works the same as `event:`+`data:`.
+async function* sseEvents(response) {
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let idx;
+      while ((idx = buf.indexOf('\n\n')) !== -1) {
+        const raw = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        const dataLines = raw.split('\n').filter((l) => l.startsWith('data:'));
+        if (!dataLines.length) continue;
+        const jsonStr = dataLines.map((l) => l.slice(5).trim()).join('');
+        if (jsonStr === '[DONE]') continue;
+        try { yield JSON.parse(jsonStr); } catch {}
+      }
+    }
+  } finally {
+    // Runs on normal completion AND on early exit (e.g. the caller's retry
+    // loop `continue`s out of the for-await after a mid-stream error) — a
+    // leaked locked reader would otherwise keep that upstream connection open.
+    reader.releaseLock();
+  }
 }

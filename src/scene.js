@@ -183,3 +183,19 @@ export async function offlineSceneFromImage(img, maxEdge, keyframeSpecs) {
   const specs = keyframeSpecs.map((k) => ({ hour: k.hour, label: k.label, recolor: k.light }));
   return finalize('upload', 'Your scene (offline preview)', true, recolorFrames(img, dims, specs));
 }
+
+// Splice one more real keyframe into an ALREADY-DISPLAYED scene (the deferred
+// 'night' relight arriving after midday+dusk are already up and scrubbable —
+// see the two-stage upload flow in app.js). Draws it at the scene's existing
+// dims so the repaint's same-size A/B requirement keeps holding, mutates
+// `scene.keyframes` in place, and returns the new keyframe (caller re-sorts its
+// own cached anchor list).
+export async function addKeyframeToScene(scene, keyframe) {
+  const img = await loadImage(keyframe.url);
+  const canvas = drawTo(img, scene.dims);
+  const ctx = canvas.getContext('2d');
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const frame = { hour: keyframe.hour, label: keyframe.label, canvas, imageData, stats: imageStats(imageData) };
+  scene.keyframes.push(frame);
+  return frame;
+}
