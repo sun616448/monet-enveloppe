@@ -7,7 +7,10 @@
 // in validation. If a refactor ever generates a keyframe from the photo, the
 // repaint consistency breaks. Do not regress this.
 
-export const QUALITY = 'medium'; // validated: the Monet daubs survive at medium
+// 'low', not 'medium': speed took priority over the medium-quality brushwork
+// fidelity from the original validation (validate/quality-probe.mjs) — low is
+// flatter/less painterly but meaningfully faster on both the base + relight calls.
+export const QUALITY = 'low';
 
 // Base: photo -> Monet, composition preserved. Monet-SPECIFIC steering (generic
 // "impressionist oil" gave a Van-Gogh-swirl filter in validation).

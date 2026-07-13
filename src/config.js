@@ -66,7 +66,7 @@ export const UPLOAD_MAX_EDGE = 1024;
 
 // THE one tunable knob: seconds for the auto-advancing day to paint a full 24h
 // loop (dawn→midday→dusk→night→dawn…). 30–60s is the sweet spot; adjust by feel.
-export const DAY_SWEEP_SECONDS = 45;
+export const DAY_SWEEP_SECONDS = 22;
 
 // Within-segment colour drift strength (0..1): how strongly the not-yet-
 // repainted regions of keyframe A are tinted toward keyframe B's palette as the

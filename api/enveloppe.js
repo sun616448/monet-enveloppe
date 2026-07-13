@@ -168,7 +168,12 @@ async function edit(prompt, imgBytes, imgMime, addCost) {
     const form = new FormData();
     form.append('model', 'gpt-image-2');
     form.append('prompt', prompt);
-    form.append('size', '1536x1024');
+    // Square, not the wider 1536x1024: latency/cost scale with token count (≈
+    // pixel area), and 1024x1024 is ~33% fewer pixels — the biggest single lever
+    // on wall-clock time for the base + relight calls. Output canvas ends up
+    // square regardless of the uploaded photo's own aspect ratio (already true
+    // before this change, since gpt-image-2 only offers these 3 fixed sizes).
+    form.append('size', '1024x1024');
     form.append('quality', QUALITY);
     form.append('n', '1');
     form.append('image', new Blob([imgBytes], { type: imgMime }), imgMime === 'image/jpeg' ? 'in.jpg' : 'in.png');

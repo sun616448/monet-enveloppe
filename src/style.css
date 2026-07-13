@@ -850,8 +850,12 @@ body {
 /* Wide screens: the wall caps at 1440 on smaller windows, leaving empty margins.
    Here we widen the wall into those margins and give each wing a second column
    of paintings (all six shown), while the centre painting keeps its size (capped
-   at 860px) so only the sides grow. */
-@media (min-width: 1560px) {
+   at 860px) so only the sides grow. Threshold set below 1440 (rather than 1560)
+   so the two-column wings show at ordinary 100%-zoom laptop widths, not just
+   when the page is zoomed out — the wing tracks' 300px min floor plus the
+   centre's 0px min floor always sum well under any width in this range, so
+   there's no overflow risk at the lower bound. */
+@media (min-width: 1360px) {
   .masthead,
   .gallery-wall,
   .colophon {

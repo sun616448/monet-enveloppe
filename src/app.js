@@ -332,11 +332,17 @@ function hideStageBusy() {
 let paintingTimer = null;
 function showPainting() {
   const steps = ['Painting your scene…', 'Lighting the dawn…', 'Lighting midday…', 'Lighting the dusk…', 'Letting it dry…'];
+  const start = performance.now();
   let i = 0;
   showStageBusy(steps[0]);
   paintingTimer = setInterval(() => {
-    i = Math.min(i + 1, steps.length - 1);
-    els.stageBusyText.textContent = steps[i];
+    i++;
+    // Once the scripted steps run out, keep ticking with an elapsed-time readout
+    // instead of freezing on the last line — the actual generation (two
+    // sequential gpt-image-2 calls) often outlasts the scripted steps, and a
+    // frozen status reads as stuck rather than still working.
+    els.stageBusyText.textContent =
+      i < steps.length ? steps[i] : `Still painting… (${Math.round((performance.now() - start) / 1000)}s)`;
   }, 1700);
 }
 function stopPainting() {
