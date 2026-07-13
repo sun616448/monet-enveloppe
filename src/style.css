@@ -22,6 +22,14 @@ body {
   padding: 0;
 }
 
+html {
+  /* Bake in the "80% browser zoom" look as the default 100% view — same trick
+     as an actual browser zoom-out: shrinks everything AND gives layout more
+     effective room (so width-based breakpoints, e.g. the gallery wings'
+     two-column reveal, see it as if the viewport were 1/0.8 = 1.25x wider). */
+  zoom: 0.8;
+}
+
 body {
   background:
     radial-gradient(120% 90% at 50% -10%, #fbf6ec 0%, var(--paper) 45%, var(--paper-2) 100%);
