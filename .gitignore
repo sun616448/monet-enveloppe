@@ -25,3 +25,6 @@ npm-debug.log*
 
 # Validation probe output (generated, not source)
 validate/out/
+
+# Demo video (hosted via GitHub attachment CDN, not tracked in repo)
+*.mp4
